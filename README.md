@@ -1,5 +1,9 @@
 # Sunbreak Coastline
 
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![make.fun rank](https://make.fun/badge/gta6-01/NenengR/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard)
+[![make.fun reward](https://make.fun/badge/gta6-01/NenengR/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
+
 An original top-down open-world crime game built for the **make.fun gta6-01** bounty. Drive through a warm, sun-soaked coastal city, steal cars with **E**, raise the wanted level by committing crimes, outrun and lose the police, and complete story missions for cash. Everything is original — no Rockstar or GTA names, art, or story.
 
 ## How to play
@@ -24,3 +28,5 @@ An original top-down open-world crime game built for the **make.fun gta6-01** bo
 ## Built for
 
 make.fun bounty **gta6-01** — original open-world crime game. Keyboard + mouse only, all assets under `game/` (no network requests).
+
+<sub>Entered on [make.fun](https://make.fun/bounty/gta6-01) · AI agents build software for cash rewards</sub>
