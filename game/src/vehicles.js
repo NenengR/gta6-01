@@ -2,6 +2,11 @@ import { VEHICLE_COLORS, WORLD, angleDelta, clamp, distance, turnToward } from "
 
 let vehicleId = 0;
 
+// IDs are local to a newly generated world, not to the lifetime of the page.
+export function resetVehicleIds() {
+  vehicleId = 0;
+}
+
 export function createVehicle({ x, y, angle = 0, color, type = "sedan", parked = false, ai = false } = {}) {
   vehicleId += 1;
   return {
@@ -18,11 +23,13 @@ export function createVehicle({ x, y, angle = 0, color, type = "sedan", parked =
     parked,
     ai,
     occupied: false,
+    stolen: false,
     radius: type === "truck" ? 25 : 20,
     length: type === "truck" ? 58 : 48,
     width: type === "truck" ? 27 : 22,
     health: 100,
     skid: 0,
+    launch: 0,
     crashCooldown: 0,
     enginePower: type === "truck" ? 360 : 430,
     maxSpeed: type === "truck" ? 390 : 520,
@@ -46,14 +53,17 @@ export function updateVehicle(vehicle, input, city, delta, now, controlled = fal
   const speedAlongCar = Math.cos(vehicle.angle) * vehicle.vx + Math.sin(vehicle.angle) * vehicle.vy;
   const maxReverse = 150;
 
+  // P2-2: integrate engine force once per step. The old grip term multiplied
+  // enginePower by an exponential factor AND by delta again, so a car at full
+  // throttle topped out near 95 px/s and could never outrun a 213 px/s unit.
+  vehicle.launch = clamp(vehicle.launch + (throttle !== 0 ? delta * 2.2 : -delta * 3), 0, 1);
+  const drive = vehicle.enginePower * vehicle.launch * delta;
   if (throttle > 0) {
-    const grip = 1 - Math.exp(-delta * 2.4);
-    vehicle.vx += Math.cos(vehicle.angle) * vehicle.enginePower * grip * delta;
-    vehicle.vy += Math.sin(vehicle.angle) * vehicle.enginePower * grip * delta;
+    vehicle.vx += Math.cos(vehicle.angle) * drive;
+    vehicle.vy += Math.sin(vehicle.angle) * drive;
   } else if (throttle < 0) {
-    const grip = 1 - Math.exp(-delta * 3.5);
-    vehicle.vx += Math.cos(vehicle.angle) * vehicle.enginePower * 0.58 * grip * delta;
-    vehicle.vy += Math.sin(vehicle.angle) * vehicle.enginePower * 0.58 * grip * delta;
+    vehicle.vx -= Math.cos(vehicle.angle) * drive * 0.58;
+    vehicle.vy -= Math.sin(vehicle.angle) * drive * 0.58;
   }
 
   const forwardSpeed = Math.cos(vehicle.angle) * vehicle.vx + Math.sin(vehicle.angle) * vehicle.vy;
@@ -61,7 +71,7 @@ export function updateVehicle(vehicle, input, city, delta, now, controlled = fal
   const lateralX = -Math.sin(vehicle.angle);
   const lateralY = Math.cos(vehicle.angle);
   const lateralSpeed = lateralX * vehicle.vx + lateralY * vehicle.vy;
-  const gripAmount = 1 - Math.exp(-delta * (vehicle.skid > 0 ? 1.4 : 7.5));
+  const gripAmount = 1 - Math.exp(-delta * (vehicle.skid > 0 ? 1.4 : 4.5));
   vehicle.vx -= lateralX * lateralSpeed * gripAmount;
   vehicle.vy -= lateralY * lateralSpeed * gripAmount;
   vehicle.vx *= reverseDrag;
@@ -94,12 +104,12 @@ export function updateVehicle(vehicle, input, city, delta, now, controlled = fal
   if (Math.abs(before.x - vehicle.x) > 0.5 || Math.abs(before.y - vehicle.y) > 0.5) {
     const impact = Math.hypot(vehicle.x - oldX, vehicle.y - oldY);
     if (impact > 0.4 && vehicle.crashCooldown <= 0) {
-      vehicle.health = clamp(vehicle.health - impact * 0.55, 0, 100);
+      vehicle.health = clamp(vehicle.health - impact * 0.3, 0, 100);
       vehicle.crashCooldown = 0.18;
-      vehicle.skid = 0.8;
+      vehicle.skid = 0.5;
     }
-    vehicle.vx *= 0.45;
-    vehicle.vy *= 0.45;
+    vehicle.vx *= 0.8;
+    vehicle.vy *= 0.8;
   }
   vehicle.speed = Math.hypot(vehicle.vx, vehicle.vy);
 }
@@ -149,4 +159,40 @@ export function recoverVehicle(vehicle) {
   vehicle.vy = 0;
   vehicle.angle = 0;
   vehicle.speed = 0;
+  vehicle.launch = 0;
+}
+
+// Separate overlapping bodies and apply damage only for closing impacts.
+export function resolveVehicleCollision(vehicle, other) {
+  const dx = other.x - vehicle.x;
+  const dy = other.y - vehicle.y;
+  const separation = Math.hypot(dx, dy);
+  const minimum = vehicle.radius + other.radius;
+  if (separation >= minimum) return 0;
+  const nx = separation > 0 ? dx / separation : Math.cos(vehicle.angle);
+  const ny = separation > 0 ? dy / separation : Math.sin(vehicle.angle);
+  const overlap = minimum - separation + 0.1;
+  vehicle.x -= nx * overlap / 2;
+  vehicle.y -= ny * overlap / 2;
+  other.x += nx * overlap / 2;
+  other.y += ny * overlap / 2;
+  const closing = Math.max(0, (vehicle.vx - other.vx) * nx + (vehicle.vy - other.vy) * ny);
+  if (closing <= 0) return 0;
+  vehicle.vx -= nx * closing * 0.65;
+  vehicle.vy -= ny * closing * 0.65;
+  other.vx += nx * closing * 0.65;
+  other.vy += ny * closing * 0.65;
+  vehicle.speed = Math.hypot(vehicle.vx, vehicle.vy);
+  other.speed = Math.hypot(other.vx, other.vy);
+  const damage = Math.min(55, closing * 0.12);
+  vehicle.health = Math.max(0, vehicle.health - damage);
+  other.health = Math.max(0, other.health - damage);
+  vehicle.crashCooldown = 0.25;
+  return damage;
+}
+
+export function markVehicleStolen(vehicle) {
+  if (vehicle.police || vehicle.stolen) return false;
+  vehicle.stolen = true;
+  return true;
 }

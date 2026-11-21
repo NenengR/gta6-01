@@ -1,6 +1,35 @@
-import { COLORS, ROAD_X, ROAD_Y, ROAD_WIDTH, STREET_NAMES, WORLD, makeRng, pick } from "./config.js";
+import { COAST, COLORS, LANDMARKS, ROAD_X, ROAD_Y, ROAD_WIDTH, STREET_NAMES, WORLD, makeRng, pick } from "./config.js";
 
 const BUILDING_COLORS = ["#d87955", "#e29b62", "#c9684f", "#e7b86f", "#b85c52", "#d99872"];
+
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function reservedRect(landmark) {
+  const pad = landmark.kind === "npc" ? 20 : 54;
+  return { x: landmark.x - pad, y: landmark.y - pad, w: pad * 2, h: pad * 2 };
+}
+
+function nearLandmark(x, y, radius) {
+  for (const landmark of LANDMARKS) {
+    const rect = reservedRect(landmark);
+    const cx = Math.max(rect.x, Math.min(x, rect.x + rect.w));
+    const cy = Math.max(rect.y, Math.min(y, rect.y + rect.h));
+    if ((x - cx) ** 2 + (y - cy) ** 2 < (radius + 2) ** 2) return true;
+  }
+  return false;
+}
+
+function onAsphalt(x, y, radius) {
+  const limit = ROAD_WIDTH / 2 + radius;
+  return ROAD_X.some((road) => Math.abs(x - road) <= limit)
+    || ROAD_Y.some((road) => Math.abs(y - road) <= limit);
+}
+
+function buildingAt(x, y, buildings) {
+  return buildings.some((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+}
 
 function makeBlock(cx, cy, width, depth, rng, index) {
   const buildings = [];
@@ -8,9 +37,13 @@ function makeBlock(cx, cy, width, depth, rng, index) {
   const gap = 14;
   const cellWidth = (width - gap) / 2;
   const cellDepth = (depth - gap) / 2;
+  let plazaRect = null;
   for (let row = 0; row < 2; row += 1) {
     for (let column = 0; column < 2; column += 1) {
-      if (plaza && row === 1 && column === 1) continue;
+      if (plaza && row === 1 && column === 1) {
+        plazaRect = { x: cx + cellWidth + gap, y: cy + cellDepth + gap, w: cellWidth, h: cellDepth };
+        continue;
+      }
       const widthJitter = (rng() - 0.5) * 12;
       const depthJitter = (rng() - 0.5) * 10;
       buildings.push({
@@ -25,7 +58,7 @@ function makeBlock(cx, cy, width, depth, rng, index) {
       });
     }
   }
-  return { buildings, plaza };
+  return { buildings, plaza, plazaRect };
 }
 
 export function createCity(seed = 1) {
@@ -38,29 +71,39 @@ export function createCity(seed = 1) {
   for (let column = 0; column < ROAD_X.length - 1; column += 1) {
     for (let row = 0; row < ROAD_Y.length - 1; row += 1) {
       const margin = ROAD_WIDTH / 2 + 14;
-      const block = makeBlock(
-        ROAD_X[column] + margin,
-        ROAD_Y[row] + margin,
-        ROAD_X[column + 1] - ROAD_X[column] - margin * 2,
-        ROAD_Y[row + 1] - ROAD_Y[row] - margin * 2,
-        rng,
-        blockIndex,
-      );
+      const width = ROAD_X[column + 1] - ROAD_X[column] - margin * 2;
+      const depth = ROAD_Y[row + 1] - ROAD_Y[row] - margin * 2;
+      const block = makeBlock(ROAD_X[column] + margin, ROAD_Y[row] + margin, width, depth, rng, blockIndex);
       blockIndex += 1;
-      buildings.push(...block.buildings);
-      if (block.plaza) {
-        const plazaX = ROAD_X[column] + ROAD_WIDTH / 2;
-        const plazaY = ROAD_Y[row] + ROAD_WIDTH / 2;
-        plazas.push({ x: plazaX, y: plazaY, r: 82 });
-        trees.push({ x: plazaX + 60, y: plazaY - 58, r: 17 }, { x: plazaX - 64, y: plazaY + 54, r: 15 });
+      for (const building of block.buildings) {
+        const rect = { x: building.x, y: building.y, w: building.w, h: building.h };
+        const reserved = LANDMARKS.some((lm) => rectsOverlap(rect.x, rect.y, rect.w, rect.h,
+          reservedRect(lm).x, reservedRect(lm).y, reservedRect(lm).w, reservedRect(lm).h));
+        if (!reserved) buildings.push(building);
+      }
+      if (block.plaza && block.plazaRect) {
+        const rect = block.plazaRect;
+        const px = rect.x + rect.w / 2;
+        const py = rect.y + rect.h / 2;
+        plazas.push({ x: px, y: py, w: rect.w, h: rect.h, r: Math.min(rect.w, rect.h) * 0.45 });
+        trees.push({ x: px - rect.w * 0.3, y: py - rect.h * 0.3, r: 14 });
+        trees.push({ x: px + rect.w * 0.3, y: py + rect.h * 0.3, r: 12 });
       }
     }
   }
 
+  // P1-3: corner trees sit on the sidewalk strip, never on the road surface.
   for (let column = 0; column < ROAD_X.length; column += 1) {
     for (let row = 0; row < ROAD_Y.length; row += 1) {
       if (rng() > 0.62) {
-        trees.push({ x: ROAD_X[column] + 62, y: ROAD_Y[row] + 66, r: 14 + rng() * 7 });
+        const tree = {
+          x: ROAD_X[column] + ROAD_WIDTH / 2 + 11,
+          y: ROAD_Y[row] + ROAD_WIDTH / 2 + 11,
+          r: 9 + rng() * 1.5,
+        };
+        if (!onAsphalt(tree.x, tree.y, tree.r)
+          && !nearLandmark(tree.x, tree.y, tree.r)
+          && !buildingAt(tree.x, tree.y, buildings)) trees.push(tree);
       }
     }
   }
@@ -108,27 +151,46 @@ export function createCity(seed = 1) {
       entity.y = Math.max(radius, Math.min(entity.y, WORLD.height - radius));
       return entity;
     },
-    drawCityGround(ctx) {
-      return drawCityGround(ctx, this);
-    },
-    drawCityBuildings(ctx) {
-      return drawCityBuildings(ctx, this);
-    },
   };
+}
+
+function drawPlazas(ctx, city) {
+  for (const plaza of city.plazas) {
+    ctx.fillStyle = COLORS.sidewalk;
+    ctx.fillRect(plaza.x, plaza.y, plaza.w, plaza.h);
+    ctx.strokeStyle = "rgba(150,122,84,0.55)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(plaza.x + 1, plaza.y + 1, plaza.w - 2, plaza.h - 2);
+    ctx.strokeStyle = "rgba(150,122,84,0.28)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(plaza.x, plaza.y + plaza.h / 2);
+    ctx.lineTo(plaza.x + plaza.w, plaza.y + plaza.h / 2);
+    ctx.moveTo(plaza.x + plaza.w / 2, plaza.y);
+    ctx.lineTo(plaza.x + plaza.w / 2, plaza.y + plaza.h);
+    ctx.stroke();
+    ctx.fillStyle = "#8d6a45";
+    ctx.font = "bold 11px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("PLAZA", plaza.x + plaza.w / 2, plaza.y + plaza.h * 0.28);
+  }
 }
 
 export function drawCityGround(ctx, city) {
   ctx.fillStyle = COLORS.ground;
   ctx.fillRect(0, 0, city.width, city.height);
   ctx.fillStyle = COLORS.sand;
-  ctx.fillRect(city.width - 380, 0, 380, city.height);
+  ctx.fillRect(COAST.sandStart, 0, city.width - COAST.sandStart, city.height);
   ctx.fillStyle = COLORS.sandLight;
-  ctx.fillRect(city.width - 190, 0, 190, city.height);
+  ctx.fillRect(COAST.wetSandStart, 0, COAST.waterStart - COAST.wetSandStart, city.height);
   ctx.fillStyle = COLORS.ocean;
-  ctx.fillRect(city.width - 220, 0, 220, city.height);
+  ctx.fillRect(COAST.waterStart, 0, city.width - COAST.waterStart, city.height);
   ctx.fillStyle = COLORS.oceanDeep;
-  ctx.fillRect(city.width - 85, 0, 85, city.height);
+  ctx.fillRect(COAST.deepWaterStart, 0, city.width - COAST.deepWaterStart, city.height);
+  drawPlazas(ctx, city);
 
+  const roadEnd = COAST.waterStart - 10;
   ctx.strokeStyle = COLORS.sidewalk;
   ctx.lineWidth = city.roadWidth + 28;
   for (const road of city.roadX) {
@@ -140,7 +202,7 @@ export function drawCityGround(ctx, city) {
   for (const road of city.roadY) {
     ctx.beginPath();
     ctx.moveTo(0, road);
-    ctx.lineTo(city.width - 220, road);
+    ctx.lineTo(roadEnd, road);
     ctx.stroke();
   }
 
@@ -155,7 +217,7 @@ export function drawCityGround(ctx, city) {
   for (const road of city.roadY) {
     ctx.beginPath();
     ctx.moveTo(0, road);
-    ctx.lineTo(city.width - 220, road);
+    ctx.lineTo(roadEnd, road);
     ctx.stroke();
   }
 
@@ -172,10 +234,72 @@ export function drawCityGround(ctx, city) {
   for (const road of city.roadY) {
     ctx.beginPath();
     ctx.moveTo(0, road);
-    ctx.lineTo(city.width - 220, road);
+    ctx.lineTo(roadEnd, road);
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function drawLandmark(ctx, landmark) {
+  if (landmark.kind === "tower") {
+    ctx.strokeStyle = "#d9e2e8";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(landmark.x - 18, landmark.y + 14);
+    ctx.lineTo(landmark.x, landmark.y - 72);
+    ctx.lineTo(landmark.x + 18, landmark.y + 14);
+    ctx.moveTo(landmark.x - 12, landmark.y - 20);
+    ctx.lineTo(landmark.x + 12, landmark.y - 20);
+    ctx.moveTo(landmark.x - 6, landmark.y - 46);
+    ctx.lineTo(landmark.x + 6, landmark.y - 46);
+    ctx.stroke();
+    ctx.fillStyle = "#ff6d63";
+    ctx.beginPath();
+    ctx.arc(landmark.x, landmark.y - 76, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (landmark.kind === "lockup") {
+    ctx.fillStyle = "#6b747c";
+    ctx.fillRect(landmark.x - 34, landmark.y - 24, 68, 48);
+    ctx.fillStyle = "#3c454c";
+    ctx.fillRect(landmark.x - 26, landmark.y - 14, 52, 38);
+    ctx.strokeStyle = "#98a5ad";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 5; i += 1) {
+      const y = landmark.y - 8 + i * 8;
+      ctx.beginPath();
+      ctx.moveTo(landmark.x - 24, y);
+      ctx.lineTo(landmark.x + 24, y);
+      ctx.stroke();
+    }
+  } else if (landmark.kind === "gallery") {
+    ctx.fillStyle = "#e6dcc0";
+    ctx.fillRect(landmark.x - 38, landmark.y - 26, 76, 52);
+    ctx.fillStyle = "#b99246";
+    ctx.fillRect(landmark.x - 38, landmark.y - 32, 76, 10);
+    ctx.fillStyle = "#8c6b32";
+    for (let i = -2; i <= 2; i += 1) ctx.fillRect(landmark.x + i * 15 - 3, landmark.y - 22, 6, 42);
+  } else {
+    ctx.fillStyle = landmark.color || "#d9a06b";
+    ctx.fillRect(landmark.x - 8, landmark.y - 8, 16, 20);
+    ctx.fillStyle = "#e7b98f";
+    ctx.beginPath();
+    ctx.arc(landmark.x, landmark.y - 13, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = landmark.kind === "npc" ? "#fff4d4" : "#f5d78c";
+  ctx.font = "bold 11px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(landmark.label, landmark.x, landmark.kind === "npc" ? landmark.y - 24 : landmark.y + 42);
+}
+
+export function drawCityLandmarks(ctx, city) {
+  for (const landmark of LANDMARKS) {
+    ctx.save();
+    drawLandmark(ctx, landmark);
+    ctx.restore();
+  }
+  void city;
 }
 
 export function drawCityBuildings(ctx, city) {
@@ -212,4 +336,5 @@ export function drawCityBuildings(ctx, city) {
     ctx.arc(tree.x - tree.r * 0.25, tree.y - tree.r * 0.25, tree.r * 0.62, 0, Math.PI * 2);
     ctx.fill();
   }
+  drawCityLandmarks(ctx, city);
 }

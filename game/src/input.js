@@ -1,63 +1,84 @@
-// Keyboard + mouse input: WASD/arrows move/drive, E steal/exit car, Space punch,
-// F or mouse shoot, M mute, P pause.
+// Keyboard + mouse, mapped through KEYS. Movement/driving are held actions;
+// punches, interactions and clicks are edge-triggered and cleared once per frame.
+// `pointer.x/y` are meant to be WORLD coordinates; main.js overwrites them every
+// frame from the camera transform before combat.js uses them for aiming.
 import { KEYS } from "./config.js";
 
-export function createInput(canvas) {
+export function createInput(canvas, onGesture) {
   const held = new Set();
   const pressed = new Set();
-  const pointer = { x: 0, y: 0, worldX: 0, worldY: 0, active: false, mouseDown: false };
+  let mouseBlocked = false;
+  const pointer = {
+    screenX: 0,
+    screenY: 0,
+    x: 0,
+    y: 0,
+    active: false,
+    mouseDown: false,
+    clicked: false,
+  };
 
-  function actionFor(code) {
-    for (const [action, codes] of Object.entries(KEYS)) {
-      if (codes.includes(code)) return action;
-    }
-    return null;
+  // Build a lookup once: event.code -> action name.
+  const actionByCode = new Map();
+  for (const [action, codes] of Object.entries(KEYS)) {
+    for (const code of codes) actionByCode.set(code, action);
   }
 
+  const PREVENT = new Set([
+    "forward", "back", "left", "right", "punch", "interact", "reload", "pause", "confirm",
+  ]);
+
   function onKeyDown(event) {
-    const action = actionFor(event.code);
+    if (onGesture) onGesture("key");
+    const action = actionByCode.get(event.code);
     if (!action) return;
-    if (["forward", "back", "left", "right", "interact", "punch", "shoot", "reload", "pause"].includes(action)) {
-      event.preventDefault();
-    }
+    if (PREVENT.has(action)) event.preventDefault();
     if (!held.has(action)) pressed.add(action);
     held.add(action);
   }
 
   function onKeyUp(event) {
-    const action = actionFor(event.code);
+    const action = actionByCode.get(event.code);
     if (action) held.delete(action);
   }
 
   function updatePointer(event) {
     const bounds = canvas.getBoundingClientRect();
-    pointer.x = event.clientX - bounds.left;
-    pointer.y = event.clientY - bounds.top;
+    pointer.screenX = event.clientX - bounds.left;
+    pointer.screenY = event.clientY - bounds.top;
     pointer.active = true;
   }
 
   function onMouseDown(event) {
     if (event.button !== 0) return;
+    if (onGesture) onGesture("mouse");
     updatePointer(event);
     pointer.mouseDown = true;
-    pressed.add("shoot");
+    pointer.clicked = true;
   }
 
   function onMouseUp(event) {
-    if (event.button === 0) pointer.mouseDown = false;
+    if (event.button === 0) {
+      pointer.mouseDown = false;
+      mouseBlocked = false;
+    }
   }
 
   function onMouseMove(event) {
     updatePointer(event);
   }
 
-  window.addEventListener("keydown", onKeyDown);
-  window.addEventListener("keyup", onKeyUp);
-  window.addEventListener("blur", () => {
+  function clearHeld() {
     held.clear();
     pressed.clear();
+    mouseBlocked = false;
     pointer.mouseDown = false;
-  });
+    pointer.clicked = false;
+  }
+
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", clearHeld);
   canvas.addEventListener("mousedown", onMouseDown);
   window.addEventListener("mouseup", onMouseUp);
   canvas.addEventListener("mousemove", onMouseMove);
@@ -65,18 +86,35 @@ export function createInput(canvas) {
 
   return {
     pointer,
+    // combat.js reads `input.mouseDown`: true for the mouse button OR the F key.
+    get mouseDown() {
+      return (!mouseBlocked && pointer.mouseDown) || held.has("shoot");
+    },
     isDown(action) {
       return held.has(action);
     },
     wasPressed(action) {
       return pressed.has(action);
     },
+    wasClicked() {
+      return pointer.clicked;
+    },
+    consumePressed(action) {
+      return pressed.delete(action);
+    },
+    consumeUiInput() {
+      pressed.clear();
+      pointer.clicked = false;
+      mouseBlocked = pointer.mouseDown;
+    },
     endFrame() {
       pressed.clear();
+      pointer.clicked = false;
     },
     destroy() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearHeld);
       canvas.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mouseup", onMouseUp);
       canvas.removeEventListener("mousemove", onMouseMove);

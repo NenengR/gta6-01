@@ -1,9 +1,11 @@
 const SAVE_KEY = "sunbreak-coastline-save-v1";
 
 export function saveGame(state) {
+  if (!Number.isFinite(state.player.health) || state.player.health <= 0 || state.police.busted) return false;
   try {
     const data = {
-      version: 1,
+      version: 2,
+      seed: state.seed,
       savedAt: Date.now(),
       player: {
         x: state.player.x,
@@ -13,6 +15,10 @@ export function saveGame(state) {
         cash: state.player.cash,
         vehicleId: state.player.vehicle?.id || null,
       },
+      vehicles: state.traffic.cars.map((car) => ({
+        id: car.id, x: car.x, y: car.y, angle: car.angle,
+        health: car.health, vx: car.vx, vy: car.vy, stolen: car.stolen === true,
+      })),
       combat: {
         magazine: state.combat.magazine,
         reserveAmmo: state.combat.reserveAmmo,
@@ -39,7 +45,9 @@ export function loadGame() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 1 || !data.player) return null;
+    if (!data || data.version !== 2 || !Number.isInteger(data.seed) || !data.player
+        || !Number.isFinite(data.player.health) || data.player.health <= 0
+        || !Number.isFinite(data.player.x) || !Number.isFinite(data.player.y)) return null;
     return data;
   } catch {
     return null;
@@ -48,7 +56,7 @@ export function loadGame() {
 
 export function hasSaveGame() {
   try {
-    return Boolean(localStorage.getItem(SAVE_KEY));
+    return loadGame() !== null;
   } catch {
     return false;
   }

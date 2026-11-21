@@ -1,5 +1,5 @@
 import { ROAD_X, ROAD_Y, WORLD, angleDelta, clamp, distance, makeRng, pick, turnToward } from "./config.js";
-import { createVehicle } from "./vehicles.js";
+import { createVehicle, resolveVehicleCollision } from "./vehicles.js";
 
 const COLORS = ["#d34f45", "#e4a73d", "#3f8ea3", "#e8e1cf", "#6f7f92", "#7b9560", "#9c5f83", "#d9d4c8"];
 
@@ -53,6 +53,10 @@ export function createTraffic(seed = 1, city) {
       phase: rng() * Math.PI * 2,
       color: pick(rng, ["#e7b276", "#7bb4aa", "#d68179", "#9a83bb", "#e5d7ad", "#7095ba"]),
       radius: 7,
+      kind: "pedestrian",
+      health: 60,
+      maxHealth: 60,
+      dead: false,
     });
   }
 
@@ -80,7 +84,9 @@ function steerTrafficCar(car, delta, city) {
 
 export function updateTraffic(traffic, player, city, delta, now) {
   for (const car of traffic.cars) {
-    if (car.occupied) continue;
+    // Parked cars are scenery until stolen. An abandoned car has ai = false and
+    // must never steer itself after the player exits (P1-7).
+    if (!car.ai || car.occupied || car.parked || car.health <= 0) continue;
     let obstacle = null;
     let obstacleDistance = 135;
     for (const other of traffic.cars) {
@@ -127,6 +133,7 @@ export function updateTraffic(traffic, player, city, delta, now) {
   }
 
   for (const pedestrian of traffic.pedestrians) {
+    if (pedestrian.dead) continue;
     pedestrian.phase += delta * 2.2;
     pedestrian.x += Math.cos(pedestrian.angle) * pedestrian.speed * delta;
     pedestrian.y += Math.sin(pedestrian.angle) * pedestrian.speed * delta;
@@ -154,4 +161,32 @@ export function addParkedCars(traffic, city) {
 
 export function findTrafficCar(traffic, id) {
   return traffic.cars.find((car) => car.id === id) || null;
+}
+
+export function resolvePlayerTrafficCollisions(traffic, vehicle, now, onCrime) {
+  for (const car of traffic.cars) {
+    if (car !== vehicle) resolveVehicleCollision(vehicle, car);
+  }
+  for (const pedestrian of traffic.pedestrians) {
+    if (pedestrian.dead) continue;
+    const dx = pedestrian.x - vehicle.x;
+    const dy = pedestrian.y - vehicle.y;
+    const separation = Math.hypot(dx, dy);
+    const minimum = vehicle.radius + pedestrian.radius;
+    if (separation >= minimum) continue;
+    const nx = separation > 0 ? dx / separation : Math.cos(vehicle.angle);
+    const ny = separation > 0 ? dy / separation : Math.sin(vehicle.angle);
+    pedestrian.x = vehicle.x + nx * (minimum + 1);
+    pedestrian.y = vehicle.y + ny * (minimum + 1);
+    const impact = Math.max(0, vehicle.vx * nx + vehicle.vy * ny);
+    if (impact < 20 || now < (pedestrian.vehicleHitUntil || 0)) continue;
+    pedestrian.vehicleHitUntil = now + 0.6;
+    pedestrian.health = Math.max(0, pedestrian.health - impact * 0.45);
+    pedestrian.dead = pedestrian.health <= 0;
+    pedestrian.hit = 0.3;
+    vehicle.vx *= 0.85;
+    vehicle.vy *= 0.85;
+    vehicle.speed = Math.hypot(vehicle.vx, vehicle.vy);
+    onCrime(pedestrian.dead ? "murder" : "assault", pedestrian.x, pedestrian.y);
+  }
 }

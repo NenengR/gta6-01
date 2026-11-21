@@ -1,3 +1,7 @@
+// SUNBREAK: COASTLINE — tuning constants and shared math.
+// Everything the nine gameplay systems import from here is preserved; the extra
+// blocks at the bottom are new tuning knobs for the wiring (camera, HUD, crime).
+
 export const WORLD = {
   width: 3200,
   height: 2400,
@@ -29,8 +33,52 @@ export const STREET_NAMES = {
   horizontal: ["Sunset Drive", "Coral Way", "Mercado Street", "Mango Avenue", "Bayfront Road", "Palmetto Drive"],
 };
 
+// P1-3: one coast definition shared by rendering, the minimap and collision.
+// WORLD.oceanStart is the hard land edge in city.resolveCircle, so water must
+// begin exactly there. Sand begins at the existing beachStart constant.
+export const COAST = {
+  sandStart: WORLD.beachStart,
+  wetSandStart: WORLD.oceanStart - 40,
+  waterStart: WORLD.oceanStart,
+  deepWaterStart: WORLD.oceanStart + 90,
+};
+
+// P1-5: story landmarks and characters, placed just outside the asphalt.
+export const LANDMARKS = [
+  { id: "radio-tower", label: "RADIO TOWER", x: 790, y: 750, kind: "tower" },
+  { id: "lockup", label: "LOCKUP", x: 780, y: 1950, kind: "lockup" },
+  { id: "gilded-room", label: "GILDED ROOM", x: 2580, y: 750, kind: "gallery" },
+  { id: "nia", label: "NIA", x: 780, y: 880, kind: "npc", color: "#e37ba6" },
+  { id: "sol", label: "SOL", x: 1180, y: 740, kind: "npc", color: "#e0b24c" },
+  { id: "curator", label: "CURATOR", x: 1180, y: 1940, kind: "npc", color: "#a98cd6" },
+];
+
+// P1-8: permanent city pickups. Respawned as active after each mission.
+export const PICKUPS = [
+  { id: "ammo-1", kind: "ammo", label: "AMMO", x: 1180, y: 1140, amount: 24 },
+  { id: "health-1", kind: "health", label: "HEALTH", x: 2080, y: 540, amount: 35 },
+];
+
+function nearestRoadIndex(values, value) {
+  let best = 0;
+  for (let i = 1; i < values.length; i += 1) {
+    if (Math.abs(values[i] - value) < Math.abs(values[best] - value)) best = i;
+  }
+  return best;
+}
+
+// P1-4: street names derived from coordinates, never hard-coded by hand.
+export function streetNameAt(x, y, axis = "both") {
+  const vertical = STREET_NAMES.vertical[nearestRoadIndex(ROAD_X, x)];
+  const horizontal = STREET_NAMES.horizontal[nearestRoadIndex(ROAD_Y, y)];
+  if (axis === "vertical") return vertical;
+  if (axis === "horizontal") return horizontal;
+  return `${vertical} / ${horizontal}`;
+}
+
 export const VEHICLE_COLORS = ["#d34f45", "#e4a73d", "#3f8ea3", "#e8e1cf", "#6f7f92", "#7b9560", "#9c5f83", "#d9d4c8"];
 
+// Keyboard + mouse only. Space punches; F (or the left mouse button) shoots.
 export const KEYS = {
   forward: ["KeyW", "ArrowUp"],
   back: ["KeyS", "ArrowDown"],
@@ -43,8 +91,10 @@ export const KEYS = {
   reload: ["KeyR"],
   pause: ["KeyP", "Escape"],
   mute: ["KeyM"],
+  confirm: ["Enter"],
 };
 
+// ---- shared math (unchanged) ----
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export const lerp = (from, to, amount) => from + (to - from) * amount;
 export const distance = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
@@ -67,3 +117,37 @@ export function makeRng(seed = 1) {
 export function pick(rng, values) {
   return values[Math.floor(rng() * values.length)];
 }
+
+// ---- wiring tuning ----
+export const STEP = 1 / 60;          // fixed simulation step
+export const MAX_FRAME = 0.25;       // a longer stall is dropped, never replayed
+
+export const CAMERA = {
+  zoom: 1,
+  follow: 4.4,        // higher = snappier follow
+  lookAhead: 0.16,    // fraction of velocity shown ahead of the target
+  margin: 40,
+};
+
+export const GAME = {
+  autosaveInterval: 14,  // seconds between background saves
+  interactRange: 76,     // E reach for cars / the radio
+  startCash: 250,
+};
+
+export const CRIME = {
+  theft: 9,
+  assault: 15,
+  gunshot: 24,
+  murder: 32,
+  default: 12,
+};
+
+export const HUD = {
+  healthWidth: 224,
+  healthHeight: 16,
+  minimapWidth: 198,
+  minimapHeight: 152,
+  minimapMargin: 18,
+  starSize: 15,
+};

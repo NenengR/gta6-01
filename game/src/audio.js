@@ -7,6 +7,15 @@ export function createAudio() {
   const engine = createEngine(context, master);
   const siren = createSiren(context, master);
   let muted = false;
+  let resumeCount = 0;
+
+  // P1-6: browsers start AudioContext suspended until a real user gesture.
+  function resume() {
+    if (context.state === "running") return Promise.resolve();
+    resumeCount += 1;
+    const result = context.resume();
+    return result && typeof result.then === "function" ? result : Promise.resolve();
+  }
 
   function setMuted(value) {
     muted = value;
@@ -35,6 +44,10 @@ export function createAudio() {
     get muted() {
       return muted;
     },
+    get resumeCount() {
+      return resumeCount;
+    },
+    resume,
     setMuted,
     toggleMute() {
       setMuted(!muted);

@@ -1,212 +1,275 @@
-// HUD overlay: health bar, cash, wanted stars, speed, mission objective and a
-// minimap canvas showing roads, player, police and mission markers.
-import { ROAD_X, ROAD_Y, ROAD_WIDTH, WORLD, COLORS, clamp, distance } from "./config.js";
+// The in-game HUD on its own transparent canvas (pointer-events: none in the page):
+// health, cash, wanted stars, ammo, speed, the live mission objective and a minimap
+// of the city's roads with the player, police and mission markers on it.
+import { COLORS, HUD, ROAD_WIDTH, WORLD, clamp, streetNameAt } from "./config.js";
+import { activeMission, missionMarker, missionTimeRemaining } from "./missions.js";
+import { getVehicleSpeed } from "./vehicles.js";
+import { SCREEN_PLAY, SCREEN_PAUSED } from "./render.js";
 
-export function createHud(container) {
-  const root = document.createElement("div");
-  root.style.position = "absolute";
-  root.style.pointerEvents = "none";
-  root.style.inset = "0";
-  root.style.fontFamily = "system-ui, sans-serif";
-  root.style.color = "#f5ead4";
-  root.style.textShadow = "0 1px 2px rgba(0,0,0,0.8)";
-  root.style.userSelect = "none";
+const MISSION_TOTAL = 5;
+const FONT = "'Trebuchet MS', 'Segoe UI', system-ui, sans-serif";
 
-  // Health bar (top left)
-  const healthWrap = document.createElement("div");
-  healthWrap.style.position = "absolute";
-  healthWrap.style.left = "18px";
-  healthWrap.style.top = "18px";
-  healthWrap.style.width = "170px";
-  const healthLabel = document.createElement("div");
-  healthLabel.style.fontSize = "12px";
-  healthLabel.style.opacity = "0.8";
-  healthLabel.textContent = "HEALTH";
-  const healthBar = document.createElement("div");
-  healthBar.style.position = "relative";
-  healthBar.style.height = "10px";
-  healthBar.style.background = "rgba(0,0,0,0.45)";
-  healthBar.style.border = "1px solid rgba(255,255,255,0.35)";
-  healthBar.style.borderRadius = "2px";
-  healthBar.style.marginTop = "4px";
-  const healthFill = document.createElement("div");
-  healthFill.style.height = "10px";
-  healthFill.style.width = "100%";
-  healthFill.style.background = "#e85b4c";
-  healthBar.appendChild(healthFill);
-  healthWrap.appendChild(healthLabel);
-  healthWrap.appendChild(healthBar);
-  root.appendChild(healthWrap);
+export function createHud(canvas, gameCanvas) {
+  const ctx = canvas.getContext("2d");
+  let dpr = 1;
+  let width = 1280;
+  let height = 720;
 
-  // Cash (below health)
-  const cashWrap = document.createElement("div");
-  cashWrap.style.position = "absolute";
-  cashWrap.style.left = "18px";
-  cashWrap.style.top = "66px";
-  cashWrap.style.fontSize = "16px";
-  cashWrap.style.fontWeight = "700";
-  cashWrap.textContent = "$0";
-  root.appendChild(cashWrap);
-
-  // Wanted stars (top right)
-  const starsWrap = document.createElement("div");
-  starsWrap.style.position = "absolute";
-  starsWrap.style.right = "18px";
-  starsWrap.style.top = "18px";
-  starsWrap.style.display = "flex";
-  starsWrap.style.gap = "7px";
-  const stars = [];
-  for (let i = 0; i < 5; i += 1) {
-    const star = document.createElement("div");
-    star.style.width = "16px";
-    star.style.height = "16px";
-    star.style.border = "2px solid rgba(255,220,90,0.5)";
-    star.style.borderRadius = "2px";
-    star.style.background = "transparent";
-    star.style.position = "relative";
-    stars.push(star);
-    starsWrap.appendChild(star);
-  }
-  root.appendChild(starsWrap);
-
-  // Speed (top right, below stars)
-  const speedWrap = document.createElement("div");
-  speedWrap.style.position = "absolute";
-  speedWrap.style.right = "18px";
-  speedWrap.style.top = "52px";
-  speedWrap.style.fontSize = "14px";
-  speedWrap.style.fontWeight = "700";
-  speedWrap.textContent = "0 km/h";
-  root.appendChild(speedWrap);
-
-  // Mission objective (center top)
-  const missionWrap = document.createElement("div");
-  missionWrap.style.position = "absolute";
-  missionWrap.style.left = "50%";
-  missionWrap.style.top = "18px";
-  missionWrap.style.transform = "translateX(-50%)";
-  missionWrap.style.fontSize = "15px";
-  missionWrap.style.fontWeight = "700";
-  missionWrap.style.textAlign = "center";
-  missionWrap.style.maxWidth = "60%";
-  missionWrap.textContent = "";
-  root.appendChild(missionWrap);
-
-  // Minimap (bottom right)
-  const mapWrap = document.createElement("div");
-  mapWrap.style.position = "absolute";
-  mapWrap.style.right = "18px";
-  mapWrap.style.bottom = "18px";
-  mapWrap.style.width = "170px";
-  mapWrap.style.height = "130px";
-  mapWrap.style.background = "rgba(0,0,0,0.5)";
-  mapWrap.style.border = "1px solid rgba(255,255,255,0.4)";
-  mapWrap.style.borderRadius = "4px";
-  mapWrap.style.overflow = "hidden";
-  const minimap = document.createElement("canvas");
-  minimap.width = 170;
-  minimap.height = 130;
-  minimap.style.width = "100%";
-  minimap.style.height = "100%";
-  minimap.style.display = "block";
-  mapWrap.appendChild(minimap);
-  root.appendChild(mapWrap);
-
-  container.appendChild(root);
-
-  const ctx = minimap.getContext("2d");
-  const mapW = minimap.width;
-  const mapH = minimap.height;
-
-  return {
-    show() { root.style.display = ""; },
-    hide() { root.style.display = "none"; },
-    update(player, police, missions, city, now, speedKmh) {
-      // Health
-      const healthPct = clamp(player.health / player.maxHealth, 0, 1);
-      healthFill.style.width = `${healthPct * 100}%`;
-      healthFill.style.background = healthPct > 0.5 ? "#8cc66b" : healthPct > 0.25 ? "#e8c54c" : "#e85b4c";
-
-      // Cash
-      cashWrap.textContent = `$${Math.round(player.cash)}`;
-
-      // Wanted stars
-      const wanted = police.wanted || 0;
-      for (let i = 0; i < 5; i += 1) {
-        const on = i < wanted;
-        stars[i].style.background = on ? "#f5d76a" : "transparent";
-        stars[i].style.borderColor = on ? "#f5d76a" : "rgba(255,220,90,0.5)";
-        stars[i].style.boxShadow = on ? "0 0 8px rgba(245,215,106,0.8)" : "none";
-      }
-
-      // Speed
-      speedWrap.textContent = `${speedKmh} km/h`;
-
-      // Mission objective
-      const objective = missions ? missions.objectiveText || "" : "";
-      missionWrap.textContent = objective;
-
-      // Minimap
-      drawMinimap(ctx, player, police, missions, city, mapW, mapH);
-    },
-  };
-}
-
-function drawMinimap(ctx, player, police, missions, city, width, height) {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "rgba(20, 22, 24, 0.85)";
-  ctx.fillRect(0, 0, width, height);
-
-  const scale = Math.min(width / WORLD.width, height / WORLD.height) * 0.92;
-  const ox = (width - WORLD.width * scale) / 2;
-  const oy = (height - WORLD.height * scale) / 2;
-
-  // Roads
-  ctx.strokeStyle = "#5a666e";
-  ctx.lineWidth = 2;
-  for (const x of city.roadX) {
-    ctx.beginPath();
-    ctx.moveTo(ox + x * scale, oy);
-    ctx.lineTo(ox + x * scale, oy + WORLD.height * scale);
-    ctx.stroke();
-  }
-  for (const y of city.roadY) {
-    ctx.beginPath();
-    ctx.moveTo(ox, oy + y * scale);
-    ctx.lineTo(ox + (WORLD.oceanStart - 60) * scale, oy + y * scale);
-    ctx.stroke();
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = Math.max(320, window.innerWidth);
+    height = Math.max(240, window.innerHeight);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
   }
 
-  // Mission marker
-  if (missions && missions.missionMarker) {
-    const m = missions.missionMarker;
-    ctx.fillStyle = "#f5d76a";
+  function text(value, x, y, size, color, align = "left", weight = "normal") {
+    ctx.font = `${weight} ${size}px ${FONT}`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(value, x, y);
+  }
+
+  function panel(x, y, w, h, alpha = 0.62) {
+    ctx.fillStyle = `rgba(18,24,32,${alpha})`;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "rgba(242,199,106,0.25)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  }
+
+  function star(cx, cy, r, filled) {
     ctx.beginPath();
-    ctx.arc(ox + m.x * scale, oy + m.y * scale, 4, 0, Math.PI * 2);
+    for (let i = 0; i < 10; i += 1) {
+      const radius = i % 2 === 0 ? r : r * 0.45;
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const px = cx + Math.cos(a) * radius;
+      const py = cy + Math.sin(a) * radius;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = filled ? "#ffd45e" : "rgba(255,255,255,0.45)";
     ctx.fill();
-    ctx.strokeStyle = "#5d3a1a";
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = filled ? "#8a5a1e" : "rgba(255,255,255,0.75)";
+    ctx.lineWidth = 1.2;
     ctx.stroke();
   }
 
-  // Police units
-  ctx.fillStyle = "#b8c4d9";
-  for (const unit of (police.units || [])) {
-    ctx.fillRect(ox + unit.x * scale - 1.5, oy + unit.y * scale - 1.5, 3, 3);
-  }
-  // Officers
-  ctx.fillStyle = "#7a93c4";
-  for (const officer of (police.officers || [])) {
-    ctx.fillRect(ox + officer.x * scale - 1, oy + officer.y * scale - 1, 2, 2);
+  function drawHealth(player, x, y) {
+    const w = HUD.healthWidth;
+    const h = HUD.healthHeight;
+    text("HEALTH", x, y - 7, 12, "#f0e4c8", "left", "bold");
+    panel(x, y, w, h, 0.72);
+    const ratio = clamp(player.health / player.maxHealth, 0, 1);
+    const fill = ratio > 0.55 ? "#6fc47a" : ratio > 0.25 ? "#e8b455" : "#e06052";
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 2, y + 2, (w - 4) * ratio, h - 4);
+    text(`${Math.ceil(player.health)}`, x + w + 10, y + h - 2, 15, "#ffffff", "left", "bold");
   }
 
-  // Player
-  ctx.fillStyle = player.vehicle ? "#e85b4c" : "#8cc66b";
-  const pRadius = player.vehicle ? 3 : 2;
-  ctx.beginPath();
-  ctx.arc(ox + player.x * scale, oy + player.y * scale, pRadius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  function drawStars(police, x, y) {
+    const active = police ? police.wanted : 0;
+    text("WANTED", x, y - 12, 12, active > 0 ? "#ffd45e" : "rgba(255,255,255,0.55)", "center", "bold");
+    const total = 5;
+    const gap = HUD.starSize * 2.5;
+    const start = x - ((total - 1) * gap) / 2;
+    for (let i = 0; i < total; i += 1) star(start + i * gap, y + 6, HUD.starSize, i < active);
+  }
+
+  function drawAmmo(combat, x, y) {
+    const status = combat
+      ? { magazine: combat.magazine, reserve: combat.reserveAmmo, reloading: combat.reloadTimer > 0 }
+      : { magazine: 0, reserve: 0, reloading: false };
+    text("PISTOL", x, y - 8, 12, "#f0e4c8", "right", "bold");
+    text(status.reloading ? "RELOADING" : `${status.magazine} / ${status.reserve}`, x, y + 18, 26,
+      status.magazine === 0 ? "#ff8a76" : "#ffffff", "right", "bold");
+  }
+
+  function drawSpeed(player, x, y) {
+    if (player.vehicle) {
+      const kmh = getVehicleSpeed(player.vehicle);
+      text(`${kmh}`, x, y, 34, "#ffe6a8", "right", "bold");
+      text("KM/H", x, y + 18, 12, "#d9c9a6", "right");
+      const ratio = clamp(kmh / 230, 0, 1);
+      const barW = 150;
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.fillRect(x - barW, y + 27, barW, 6);
+      ctx.fillStyle = kmh > 170 ? "#e06052" : "#e0a94a";
+      ctx.fillRect(x - barW, y + 27, barW * ratio, 6);
+      const hp = clamp(player.vehicle.health / 100, 0, 1);
+      text("CAR", x, y - 24, 11, "#c9d0d6", "right", "bold");
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.fillRect(x - barW, y - 18, barW, 5);
+      ctx.fillStyle = hp > 0.4 ? "#7bbf86" : "#e06052";
+      ctx.fillRect(x - barW, y - 18, barW * hp, 5);
+    } else {
+      text("ON FOOT", x, y, 18, "#d9c9a6", "right", "bold");
+    }
+  }
+
+  function drawObjective(state, x, y, w) {
+    const missions = state.missions;
+    const active = activeMission(missions);
+    const finished = missions && missions.completed.length >= MISSION_TOTAL;
+    const wanted = state.police ? state.police.wanted : 0;
+    const objective = wanted > 0
+      ? `LOSE THE POLICE  (${wanted} star${wanted === 1 ? "" : "s"})`
+      : active ? active.step.label
+        : finished ? "All jobs done. The coastline is yours."
+          : missions ? "Press E at Nia's radio for the next job"
+            : "Explore the city";
+    const title = wanted > 0 ? "PURSUIT IN PROGRESS"
+      : active ? `${active.title}  ·  ${active.subtitle}` : "SUNBREAK: COASTLINE";
+    const remaining = missionTimeRemaining(missions);
+    const lines = remaining !== null ? 2 : 1;
+    const h = 52 + lines * 22;
+    ctx.fillStyle = "rgba(18,24,32,0.74)";
+    ctx.fillRect(x, y - h, w, h);
+    ctx.strokeStyle = "rgba(242,199,106,0.35)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y - h + 0.5, w - 1, h - 1);
+    text(title, x + 14, y - h + 22, 12, "#f2c76a", "left", "bold");
+    text(objective, x + 14, y - h + 44, 17, "#fff4d4", "left", "bold");
+    if (remaining !== null) {
+      text(`TIME ${remaining.toFixed(1)}s`, x + 14, y - h + 68, 14,
+        remaining < 12 ? "#ff8a76" : "#c9d0d6", "left", "bold");
+    }
+  }
+
+  function drawMinimap(state, x, y) {
+    const mw = HUD.minimapWidth;
+    const mh = HUD.minimapHeight;
+    panel(x, y, mw, mh, 0.78);
+    if (!state.city) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 1, y + 1, mw - 2, mh - 2);
+    ctx.clip();
+
+    const pad = 8;
+    const scale = Math.min((mw - pad * 2) / WORLD.width, (mh - pad * 2) / WORLD.height);
+    const ox = x + (mw - WORLD.width * scale) / 2;
+    const oy = y + (mh - WORLD.height * scale) / 2;
+    const mx = (wx) => ox + wx * scale;
+    const my = (wy) => oy + wy * scale;
+
+    ctx.fillStyle = COLORS.ground;
+    ctx.fillRect(ox, oy, WORLD.width * scale, WORLD.height * scale);
+    ctx.fillStyle = COLORS.ocean;
+    ctx.fillRect(mx(WORLD.oceanStart), oy, (WORLD.width - WORLD.oceanStart) * scale, WORLD.height * scale);
+
+    ctx.fillStyle = "rgba(120,100,74,0.26)";
+    for (const b of state.city.buildings) {
+      ctx.fillRect(mx(b.x), my(b.y), Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    }
+
+    ctx.strokeStyle = COLORS.asphalt;
+    ctx.lineWidth = Math.max(1.5, ROAD_WIDTH * scale * 0.62);
+    ctx.beginPath();
+    for (const road of state.city.roadX) {
+      ctx.moveTo(mx(road), my(0));
+      ctx.lineTo(mx(road), my(WORLD.height));
+    }
+    for (const road of state.city.roadY) {
+      ctx.moveTo(mx(0), my(road));
+      ctx.lineTo(mx(WORLD.oceanStart), my(road));
+    }
+    ctx.stroke();
+
+    const marker = missionMarker(state.missions);
+    if (marker) {
+      ctx.fillStyle = "#14181f";
+      ctx.beginPath();
+      ctx.arc(mx(marker.x), my(marker.y), 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffd45e";
+      ctx.beginPath();
+      ctx.arc(mx(marker.x), my(marker.y), 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const active = activeMission(state.missions);
+    if (active && active.step && Number.isFinite(active.step.x)) {
+      ctx.fillStyle = "#14181f";
+      ctx.beginPath();
+      ctx.arc(mx(active.step.x), my(active.step.y), 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#7eecb2";
+      ctx.beginPath();
+      ctx.arc(mx(active.step.x), my(active.step.y), 5.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (state.police) {
+      for (const unit of state.police.units) {
+        ctx.fillStyle = "rgba(255,106,106,0.85)";
+        ctx.fillRect(mx(unit.x) - 1.5, my(unit.y) - 1.5, 3, 3);
+      }
+      for (const officer of state.police.officers) {
+        ctx.fillStyle = "rgba(122,168,255,0.75)";
+        ctx.fillRect(mx(officer.x) - 1, my(officer.y) - 1, 2, 2);
+      }
+    }
+    const p = state.player;
+    if (p) {
+      const px = mx(p.x);
+      const py = my(p.y);
+      ctx.strokeStyle = "#14181f";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + Math.cos(p.angle) * 16, py + Math.sin(p.angle) * 16);
+      ctx.stroke();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + Math.cos(p.angle) * 16, py + Math.sin(p.angle) * 16);
+      ctx.stroke();
+      ctx.fillStyle = "#14181f";
+      ctx.beginPath();
+      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffd45e";
+      ctx.beginPath();
+      ctx.arc(px, py, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    text("COASTLINE", x + 8, y + 14, 10, "rgba(255,255,255,0.85)", "left", "bold");
+    if (state.player) {
+      text(streetNameAt(state.player.x, state.player.y, "vertical"), x + 8, y + mh - 7, 10, "#ffe6a8", "left", "bold");
+    }
+  }
+
+  function draw(state, screen) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (screen !== SCREEN_PLAY && screen !== SCREEN_PAUSED) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const m = HUD.minimapMargin;
+    const player = state.player;
+
+    drawHealth(player, m, 34);
+    if (player) text(`$${Math.round(player.cash).toLocaleString("en-US")}`, m, 88, 24, "#ffd45e", "left", "bold");
+    drawStars(state.police, width / 2, 36);
+    drawAmmo(state.combat, width - m, 38);
+    drawSpeed(player, width - m, height - 34);
+    drawObjective(state, width / 2 - 260, height - 18, 520);
+    drawMinimap(state, m, height - m - HUD.minimapHeight);
+
+    if (state.message && state.messageTimer > 0) {
+      ctx.fillStyle = "rgba(18,24,32,0.82)";
+      const tw = Math.min(width - 60, Math.max(280, state.message.length * 8 + 40));
+      ctx.fillRect(width / 2 - tw / 2, 96, tw, 36);
+      text(state.message, width / 2, 120, 15, "#fff4d4", "center", "bold");
+    }
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  return { resize, draw };
 }
