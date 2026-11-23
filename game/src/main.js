@@ -2,14 +2,12 @@
 // fixed 1/60 s steps: on foot, E steals/exits cars, crimes raise wanted heat, police chase and
 // bust, missions pay cash, death or a bust ends the run. Title / playing / paused / game over are
 // the four screens. ?shot=start|drive|chase|mission&seed=N stages a still frame for screenshots.
-import { CRIME, GAME, MAX_FRAME, STEP, clamp, distance } from "./config.js";
+import { CRIME, GAME, MAX_FRAME, STEP, clamp, distance, pointInRect } from "./config.js";
 import { createCity } from "./city.js";
 import { createPlayer, updatePlayer, placePlayer } from "./player.js";
 import { createVehicle, updateVehicle, getVehicleSpeed, nearbyVehicle, resetVehicleIds, markVehicleStolen } from "./vehicles.js";
 import { createTraffic, updateTraffic, addParkedCars, findTrafficCar, resolvePlayerTrafficCollisions } from "./traffic.js";
-import {
-  createPolice, updatePolice, reportCrime, policeStars,
-} from "./police.js";
+import { createPolice, updatePolice, reportCrime, policeStars } from "./police.js";
 import {
   createCombat, updateCombat, updateCombatBullets, addCombatEffect, policeShoot,
   createPickups, updatePickups, respawnPickups,
@@ -24,8 +22,8 @@ import { createInput } from "./input.js";
 import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_OVER } from "./render.js";
 import { createHud } from "./hud.js";
 import { stageShot } from "./shots.js";
-import { pointInRect } from "./config.js";
 
+// Stand-in audio for staged screenshots: every call is a no-op.
 const silentAudio = {
   updateEngine() {}, updateSiren() {}, shot() {}, punch() {}, crash() {}, pickup() {},
   mission() {}, alarm() {}, stop() {}, toggleMute() { return false; },
@@ -59,12 +57,12 @@ function createState(gameSeed, sound = silentAudio) {
   addParkedCars(traffic, city);
 
   // Two tagged cars for the repo and heist missions.
-  const repo = createVehicle({ x: 2280, y: 640, angle: 0, color: "#3f8ea3", parked: true });
-  repo.tag = "repo-car";
-  traffic.cars.push(repo);
-  const heist = createVehicle({ x: 1080, y: 1840, angle: Math.PI / 2, color: "#7b9560", parked: true });
-  heist.tag = "heist-car";
-  traffic.cars.push(heist);
+  const repoCar = createVehicle({ x: 2280, y: 640, angle: 0, color: "#3f8ea3", parked: true });
+  repoCar.tag = "repo-car";
+  traffic.cars.push(repoCar);
+  const heistCar = createVehicle({ x: 1080, y: 1840, angle: Math.PI / 2, color: "#7b9560", parked: true });
+  heistCar.tag = "heist-car";
+  traffic.cars.push(heistCar);
 
   const police = createPolice(gameSeed);
   const combat = createCombat();
@@ -107,7 +105,7 @@ if (shot) {
 }
 
 function runGame() {
-  // P1-6: the first real key or click unlocks audio before any sound is needed.
+  // The first real key or click unlocks audio before any sound is needed.
   const input = createInput(canvas, () => {
     if (audio.resume) audio.resume();
   });
@@ -115,11 +113,11 @@ function runGame() {
   let accumulator = 0;
   let last = performance.now();
 
-  function announce(message) {
+  function setStatus(message) {
     status.textContent = message;
   }
 
-  function showMessage(message, duration = 3.2) {
+  function flashMessage(message, duration = 3.2) {
     state.message = message;
     state.messageTimer = duration;
   }
@@ -130,30 +128,7 @@ function runGame() {
     state = createState(seed, audio);
     screen = SCREEN_PLAY;
     accumulator = 0;
-    announce("New game. Find Nia's radio on Lime Street and press E.");
-  }
-
-  function continueGame() {
-    input.consumeUiInput();
-    const data = loadGame();
-    if (!data) {
-      showMessage("No save found — starting fresh.", 3);
-      startNew();
-      return;
-    }
-    state = createState(data.seed, audio);
-    applySave(state, data);
-    screen = SCREEN_PLAY;
-    accumulator = 0;
-    announce("Save loaded. Welcome back to the coastline.");
-  }
-
-  function gameOver(reason) {
-    if (screen === SCREEN_OVER) return;
-    state.gameOverReason = reason;
-    screen = SCREEN_OVER;
-    audio.stop();
-    announce(reason === "busted" ? "Busted. Game over." : "Wasted. Game over.");
+    setStatus("New game. Find Nia's radio on Lime Street and press E.");
   }
 
   function applySave(target, data) {
@@ -193,6 +168,29 @@ function runGame() {
     }
   }
 
+  function continueGame() {
+    input.consumeUiInput();
+    const data = loadGame();
+    if (!data) {
+      flashMessage("No save found — starting fresh.", 3);
+      startNew();
+      return;
+    }
+    state = createState(data.seed, audio);
+    applySave(state, data);
+    screen = SCREEN_PLAY;
+    accumulator = 0;
+    setStatus("Save loaded. Welcome back to the coastline.");
+  }
+
+  function gameOver(reason) {
+    if (screen === SCREEN_OVER) return;
+    state.gameOverReason = reason;
+    screen = SCREEN_OVER;
+    audio.stop();
+    setStatus(reason === "busted" ? "Busted. Game over." : "Wasted. Game over.");
+  }
+
   // ---- callbacks handed to the systems ----
   function onCrime(type, x, y) {
     const before = policeStars(state.police);
@@ -201,7 +199,7 @@ function runGame() {
     if (type === "assault") audio.punch();
     if (policeStars(state.police) > before) {
       audio.alarm();
-      showMessage(`${policeStars(state.police)}-star heat — lose them!`, 2.6);
+      flashMessage(`${policeStars(state.police)}-star heat — lose them!`, 2.6);
     }
   }
 
@@ -209,23 +207,23 @@ function runGame() {
     onWanted(amount) {
       reportCrime(state.police, Math.max(0, amount - state.police.heat), performance.now() / 1000, state.player.x, state.player.y);
       audio.alarm();
-      showMessage("The handoff is hot — move!", 3);
+      flashMessage("The handoff is hot — move!", 3);
     },
     onStep(definition, step) {
       audio.pickup();
-      showMessage(step.label, 3.6);
+      flashMessage(step.label, 3.6);
       saveGame(state);
     },
     onComplete(definition) {
       state.player.cash += definition.reward;
       respawnPickups(state.pickups);
       audio.mission();
-      showMessage(`${definition.title} complete — $${definition.reward}`, 5);
+      flashMessage(`${definition.title} complete — $${definition.reward}`, 5);
       saveGame(state);
     },
     failMission(message) {
       audio.alarm();
-      showMessage(message, 5);
+      flashMessage(message, 5);
     },
   };
 
@@ -233,7 +231,7 @@ function runGame() {
     const vehicle = state.player.vehicle;
     if (!vehicle) return;
     vehicle.occupied = false;
-    // P1-7: no driver means no AI. The car stays where it was left.
+    // No driver means no AI. The car stays where it was left.
     vehicle.ai = false;
     vehicle.parked = true;
     vehicle.vx = 0;
@@ -253,9 +251,26 @@ function runGame() {
     audio.pickup();
   }
 
+  function stealNearbyCar() {
+    const { player, traffic } = state;
+    const vehicle = nearbyVehicle(traffic.cars, player);
+    if (!vehicle) return;
+    vehicle.occupied = true;
+    player.vehicle = vehicle;
+    placePlayer(player, vehicle.x, vehicle.y, vehicle.angle);
+    if (markVehicleStolen(vehicle)) onCrime("theft", vehicle.x, vehicle.y);
+    audio.pickup();
+    flashMessage(
+      vehicle.tag === "repo-car" ? "Repo coupe secured. Take it to the lockup."
+        : vehicle.tag === "heist-car" ? "Curator's car — stay sharp."
+          : "Car taken. Press E to exit.",
+      3.2,
+    );
+  }
+
   function handleInteract() {
     if (!input.wasPressed("interact")) return;
-    const { player, city, missions, traffic } = state;
+    const { player, missions } = state;
     if (player.vehicle) {
       exitVehicle();
       return;
@@ -263,32 +278,19 @@ function runGame() {
     const marker = missionMarker(missions);
     if (marker && !missions.active && distance(player.x, player.y, marker.x, marker.y) < GAME.interactRange) {
       if (missions.completed.length >= MISSION_DEFINITIONS.length) {
-        showMessage("All jobs done — the coastline is yours.", 4);
+        flashMessage("All jobs done — the coastline is yours.", 4);
         return;
       }
       const mission = availableMission(missions);
       if (mission) {
         startMission(missions, mission.id);
         state.briefing = { title: mission.title, lines: (mission.briefing || [mission.story]).slice(), timer: 7 };
-        showMessage(mission.story, 6);
+        flashMessage(mission.story, 6);
         audio.mission();
       }
       return;
     }
-    const vehicle = nearbyVehicle(traffic.cars, player);
-    if (vehicle) {
-      vehicle.occupied = true;
-      player.vehicle = vehicle;
-      placePlayer(player, vehicle.x, vehicle.y, vehicle.angle);
-      if (markVehicleStolen(vehicle)) onCrime("theft", vehicle.x, vehicle.y);
-      audio.pickup();
-      showMessage(
-        vehicle.tag === "repo-car" ? "Repo coupe secured. Take it to the lockup."
-          : vehicle.tag === "heist-car" ? "Curator's car — stay sharp."
-            : "Car taken. Press E to exit.",
-        3.2,
-      );
-    }
+    stealNearbyCar();
   }
 
   // ---- one fixed simulation step ----
@@ -312,7 +314,7 @@ function runGame() {
       }
       if (vehicle.health <= 0) {
         exitVehicle();
-        showMessage("Car wrecked — back on foot!", 3);
+        flashMessage("Car wrecked — back on foot!", 3);
       }
     } else {
       audio.updateEngine(0, false, false);
@@ -327,7 +329,7 @@ function runGame() {
     updateCombat(combat, player, input, city, delta, now, input.pointer, police, traffic, onCrime);
     updateCombatBullets(combat, player, police, city, delta, onCrime, traffic);
     updatePickups(state.pickups, player, combat, (item, amount) => {
-      showMessage(`${item.label} +${Math.round(amount)}`, 2.6);
+      flashMessage(`${item.label} +${Math.round(amount)}`, 2.6);
       audio.pickup();
     });
     if (state.briefing) {
@@ -358,20 +360,22 @@ function runGame() {
     return null;
   }
 
+  function togglePause() {
+    if (screen === SCREEN_PLAY) {
+      screen = SCREEN_PAUSED;
+      setStatus("Paused.");
+    } else if (screen === SCREEN_PAUSED) {
+      screen = SCREEN_PLAY;
+      setStatus("Playing.");
+    }
+  }
+
   function handleGlobalActions() {
     if (input.consumePressed("mute")) {
       const muted = audio.toggleMute();
-      showMessage(muted ? "Sound muted" : "Sound on", 2);
+      flashMessage(muted ? "Sound muted" : "Sound on", 2);
     }
-    if (input.consumePressed("pause")) {
-      if (screen === SCREEN_PLAY) {
-        screen = SCREEN_PAUSED;
-        announce("Paused.");
-      } else if (screen === SCREEN_PAUSED) {
-        screen = SCREEN_PLAY;
-        announce("Playing.");
-      }
-    }
+    if (input.consumePressed("pause")) togglePause();
     const clicked = input.wasClicked() ? buttonAt(input.pointer.screenX, input.pointer.screenY) : null;
     if (screen === SCREEN_TITLE) {
       if (input.wasPressed("confirm") || input.wasPressed("punch") || clicked === "new") startNew();
@@ -385,7 +389,7 @@ function runGame() {
     } else if (screen === SCREEN_PAUSED && clicked === "resume") {
       input.consumeUiInput();
       screen = SCREEN_PLAY;
-      announce("Playing.");
+      setStatus("Playing.");
     }
   }
 
@@ -423,10 +427,10 @@ function runGame() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
-      announce("Paused.");
+      setStatus("Paused.");
     }
   });
 
-  announce("Sunbreak: Coastline. Press Enter or click New Game to begin.");
+  setStatus("Sunbreak: Coastline. Press Enter or click New Game to begin.");
   requestAnimationFrame(frame);
 }

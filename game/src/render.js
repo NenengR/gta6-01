@@ -61,10 +61,10 @@ export function createRenderer(canvas) {
   function updateCamera(state, delta) {
     const player = state.player;
     if (!player) return;
-    const target = player.vehicle || player;
+    const focus = player.vehicle || player;
     const lead = CAMERA.lookAhead;
-    const goalX = target.x + (target.vx || 0) * lead;
-    const goalY = target.y + (target.vy || 0) * lead;
+    const goalX = focus.x + (focus.vx || 0) * lead;
+    const goalY = focus.y + (focus.vy || 0) * lead;
     if (!cameraReady) {
       camX = goalX;
       camY = goalY;
@@ -95,6 +95,7 @@ export function createRenderer(canvas) {
     ctx.fillRect(-L / 2 + 3, -W / 2 + 3, L - 6, 4);
     ctx.fillStyle = "rgba(22,34,44,0.72)";
     ctx.fillRect(-L / 2 + L * 0.26, -W / 2 + 2, L * 0.36, W - 4);
+    // Headlights up front, taillights at the back, one pair each.
     ctx.fillStyle = "rgba(255,240,190,0.85)";
     ctx.fillRect(L / 2 - 5, -W / 2 + 2, 5, 6);
     ctx.fillRect(L / 2 - 5, W / 2 - 8, 5, 6);
@@ -191,48 +192,61 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  // ---- combat effects, one drawer per kind ----
+  function tracerEffect(e, len, color, width) {
+    const a = Math.atan2(e.vy, e.vx);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(e.x, e.y);
+    ctx.lineTo(e.x - Math.cos(a) * len, e.y - Math.sin(a) * len);
+    ctx.stroke();
+  }
+
+  function ringEffect(e, t, color, width, startR, growR) {
+    ctx.strokeStyle = color.replace("A", String(1 - t));
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, startR + growR * t, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  const EFFECT_DRAWERS = {
+    bullet(e) { tracerEffect(e, 16, "#ffe9a0", 3); },
+    enemyBullet(e) { tracerEffect(e, 11, "#ff8b6a", 2.4); },
+    muzzle(e, t) {
+      ctx.fillStyle = `rgba(255,224,140,${1 - t})`;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 5 + 9 * t, 0, Math.PI * 2);
+      ctx.fill();
+    },
+    impact(e, t) { ringEffect(e, t, "rgba(255,246,210,A)", 2.5, 4, 16); },
+    punch(e, t) {
+      ctx.strokeStyle = `rgba(255,238,180,${1 - t})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 10 + 8 * t, -0.8, 0.8);
+      ctx.stroke();
+    },
+    crash(e, t) {
+      ctx.strokeStyle = `rgba(255,205,120,${1 - t})`;
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i < 6; i += 1) {
+        const a = (i / 6) * Math.PI * 2 + t;
+        ctx.beginPath();
+        ctx.moveTo(e.x + Math.cos(a) * 3, e.y + Math.sin(a) * 3);
+        ctx.lineTo(e.x + Math.cos(a) * (10 + 20 * t), e.y + Math.sin(a) * (10 + 20 * t));
+        ctx.stroke();
+      }
+    },
+  };
+
   function drawEffects(combat) {
     if (!combat || !combat.effects) return;
     for (const e of combat.effects) {
       const t = clamp(1 - e.life / (e.maxLife || 0.3), 0, 1);
-      const kind = e.type || e.kind;
-      if (kind === "bullet" || kind === "enemyBullet") {
-        const len = kind === "bullet" ? 16 : 11;
-        const a = Math.atan2(e.vy, e.vx);
-        ctx.strokeStyle = kind === "bullet" ? "#ffe9a0" : "#ff8b6a";
-        ctx.lineWidth = kind === "bullet" ? 3 : 2.4;
-        ctx.beginPath();
-        ctx.moveTo(e.x, e.y);
-        ctx.lineTo(e.x - Math.cos(a) * len, e.y - Math.sin(a) * len);
-        ctx.stroke();
-      } else if (kind === "muzzle") {
-        ctx.fillStyle = `rgba(255,224,140,${1 - t})`;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, 5 + 9 * t, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (kind === "impact") {
-        ctx.strokeStyle = `rgba(255,246,210,${1 - t})`;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, 4 + 16 * t, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (kind === "punch") {
-        ctx.strokeStyle = `rgba(255,238,180,${1 - t})`;
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, 10 + 8 * t, -0.8, 0.8);
-        ctx.stroke();
-      } else if (kind === "crash") {
-        ctx.strokeStyle = `rgba(255,205,120,${1 - t})`;
-        ctx.lineWidth = 2.5;
-        for (let i = 0; i < 6; i += 1) {
-          const a = (i / 6) * Math.PI * 2 + t;
-          ctx.beginPath();
-          ctx.moveTo(e.x + Math.cos(a) * 3, e.y + Math.sin(a) * 3);
-          ctx.lineTo(e.x + Math.cos(a) * (10 + 20 * t), e.y + Math.sin(a) * (10 + 20 * t));
-          ctx.stroke();
-        }
-      }
+      const drawEffect = EFFECT_DRAWERS[e.type || e.kind];
+      if (drawEffect) drawEffect(e, t);
     }
   }
 
@@ -470,6 +484,7 @@ export function createRenderer(canvas) {
       const now = state.time || 0;
       const cars = state.traffic ? state.traffic.cars : [];
       const police = state.police;
+      // Skidding cars first so their tire marks sit under the bodies.
       for (const v of cars) if (v.skid > 0) drawVehicle(v, now);
       for (const v of cars) if (!(v.skid > 0)) drawVehicle(v, now);
       if (police) for (const v of police.units) drawVehicle(v, now);

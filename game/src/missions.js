@@ -81,6 +81,10 @@ export const MISSION_DEFINITIONS = [
   },
 ];
 
+function findDefinition(id) {
+  return MISSION_DEFINITIONS.find((mission) => mission.id === id) || null;
+}
+
 export function createMissionSystem() {
   return {
     completed: [],
@@ -96,7 +100,7 @@ export function availableMission(missions) {
   return MISSION_DEFINITIONS[missions.availableIndex] || null;
 }
 
-// P1-2: the radio prompt belongs only to the idle, unfinished state.
+// The radio prompt belongs only to the idle, unfinished state.
 export function showRadioMarker(missions) {
   if (!missions || missions.active) return false;
   return missions.completed.length < MISSION_DEFINITIONS.length;
@@ -109,68 +113,38 @@ export function missionMarker(missions) {
 
 export function activeMission(missions) {
   if (!missions.active) return null;
-  const definition = MISSION_DEFINITIONS.find((mission) => mission.id === missions.active.id);
+  const definition = findDefinition(missions.active.id);
   if (!definition) return null;
   const step = definition.steps[missions.active.stepIndex];
+  if (!step) return null;
   return { ...definition, step, stepIndex: missions.active.stepIndex };
 }
 
 export function startMission(missions, id, stepIndex = 0) {
-  const definition = MISSION_DEFINITIONS.find((mission) => mission.id === id);
+  const definition = findDefinition(id);
   if (!definition) return false;
   missions.active = { id, stepIndex, elapsed: 0, stepStartedAt: 0, triggered: false };
   missions.failed = false;
   return true;
 }
 
-export function updateMissions(missions, player, traffic, police, delta, now, events) {
-  if (missions.lastMessageTimer > 0) missions.lastMessageTimer = Math.max(0, missions.lastMessageTimer - delta);
-  if (!missions.active) return;
-
-  const definition = MISSION_DEFINITIONS.find((mission) => mission.id === missions.active.id);
-  const step = definition.steps[missions.active.stepIndex];
-  if (step.triggerWanted && !missions.active.triggered) {
-    missions.active.triggered = true;
-    events.onWanted(step.triggerWanted);
-  }
-  missions.active.elapsed += delta;
-
-  if (step.timeLimit) {
-    const remaining = step.timeLimit - (missions.active.elapsed - (missions.active.stepStartedAt || 0));
-    if (remaining <= 0) {
-      failMission(missions, "The trail went cold.", events);
-      return;
-    }
-  }
-
-  let complete = false;
-  if (step.type === "reach") {
-    complete = distance(player.x, player.y, step.x, step.y) <= step.radius
-      && (!step.requireVehicle || Boolean(player.vehicle));
-  } else if (step.type === "vehicle") {
-    complete = Boolean(player.vehicle) && (!step.vehicleTag || player.vehicle.tag === step.vehicleTag);
-  }
-
-  if (!complete) return;
-  const completedStepIndex = missions.active.stepIndex;
-  missions.active.stepIndex += 1;
-  missions.active.stepStartedAt = missions.active.elapsed;
-  missions.active.triggered = false;
-  if (missions.active.stepIndex < definition.steps.length) {
-    const next = definition.steps[missions.active.stepIndex];
-    if (next.triggerWanted) {
-      missions.active.triggered = true;
-      events.onWanted(next.triggerWanted);
-    }
-  }
-  events.onStep(definition, step, completedStepIndex);
-
-  if (missions.active.stepIndex >= definition.steps.length) {
-    completeMission(missions, definition, events);
-  }
+function stepTimeLeft(missions, step) {
+  if (!step.timeLimit) return null;
+  return Math.max(0, step.timeLimit - (missions.active.elapsed - (missions.active.stepStartedAt || 0)));
 }
 
-function completeMission(missions, definition, events) {
+function stepDone(step, player) {
+  if (step.type === "reach") {
+    const arrived = distance(player.x, player.y, step.x, step.y) <= step.radius;
+    return arrived && (!step.requireVehicle || Boolean(player.vehicle));
+  }
+  if (step.type === "vehicle") {
+    return Boolean(player.vehicle) && (!step.vehicleTag || player.vehicle.tag === step.vehicleTag);
+  }
+  return false;
+}
+
+function finishMission(missions, definition, events) {
   missions.completed.push(definition.id);
   missions.active = null;
   missions.availableIndex = Math.min(missions.availableIndex + 1, MISSION_DEFINITIONS.length - 1);
@@ -179,12 +153,55 @@ function completeMission(missions, definition, events) {
   events.onComplete(definition);
 }
 
-function failMission(missions, message, events) {
+function abortMission(missions, message, events) {
   missions.failed = true;
   missions.lastMessage = message;
   missions.lastMessageTimer = 4;
   missions.active = null;
   events.failMission(message);
+}
+
+function triggerStepWanted(missions, step, events) {
+  if (!step.triggerWanted || missions.active.triggered) return;
+  missions.active.triggered = true;
+  events.onWanted(step.triggerWanted);
+}
+
+export function updateMissions(missions, player, traffic, police, delta, now, events) {
+  if (missions.lastMessageTimer > 0) missions.lastMessageTimer = Math.max(0, missions.lastMessageTimer - delta);
+  if (!missions.active) return;
+
+  const definition = findDefinition(missions.active.id);
+  const step = definition.steps[missions.active.stepIndex];
+  triggerStepWanted(missions, step, events);
+  missions.active.elapsed += delta;
+
+  if (step.timeLimit) {
+    const remaining = step.timeLimit - (missions.active.elapsed - (missions.active.stepStartedAt || 0));
+    if (remaining <= 0) {
+      abortMission(missions, "The trail went cold.", events);
+      return;
+    }
+  }
+
+  if (!stepDone(step, player)) return;
+
+  const finishedIndex = missions.active.stepIndex;
+  missions.active.stepIndex += 1;
+  missions.active.stepStartedAt = missions.active.elapsed;
+  missions.active.triggered = false;
+  if (missions.active.stepIndex < definition.steps.length) {
+    triggerStepWanted(missions, definition.steps[missions.active.stepIndex], events);
+  }
+  events.onStep(definition, step, finishedIndex);
+
+  if (missions.active.stepIndex >= definition.steps.length) {
+    finishMission(missions, definition, events);
+  }
+  void traffic;
+  void police;
+  void now;
+  void clamp;
 }
 
 export function resetMission(missions) {
@@ -201,8 +218,9 @@ export function missionObjective(missions) {
 
 export function missionTimeRemaining(missions) {
   if (!missions.active) return null;
-  const definition = MISSION_DEFINITIONS.find((mission) => mission.id === missions.active.id);
+  const definition = findDefinition(missions.active.id);
+  if (!definition) return null;
   const step = definition.steps[missions.active.stepIndex];
-  if (!step.timeLimit) return null;
-  return Math.max(0, step.timeLimit - (missions.active.elapsed - (missions.active.stepStartedAt || 0)));
+  if (!step) return null;
+  return stepTimeLeft(missions, step);
 }

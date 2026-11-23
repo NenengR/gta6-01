@@ -1,7 +1,34 @@
 // SUNBREAK: COASTLINE — tuning constants and shared math.
-// Everything the nine gameplay systems import from here is preserved; the extra
-// blocks at the bottom are new tuning knobs for the wiring (camera, HUD, crime).
+//
+// Every export here is part of the public surface the nine gameplay systems
+// import; names and values are preserved exactly. Only the layout of this
+// file changed: math first, then the world layout, then the tuning knobs.
 
+// ---- shared math ----
+export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+export const lerp = (from, to, amount) => from + (to - from) * amount;
+export const distance = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
+export const angleTo = (ax, ay, bx, by) => Math.atan2(by - ay, bx - ax);
+export const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+export const turnToward = (from, to, amount) => from + clamp(angleDelta(from, to), -amount, amount);
+export const pointInRect = (x, y, rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+
+export function makeRng(seed = 1) {
+  let s = seed >>> 0;
+  return () => {
+    s += 0x6d2b79f5;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function pick(rng, values) {
+  return values[Math.floor(rng() * values.length)];
+}
+
+// ---- world layout ----
 export const WORLD = {
   width: 3200,
   height: 2400,
@@ -33,7 +60,7 @@ export const STREET_NAMES = {
   horizontal: ["Sunset Drive", "Coral Way", "Mercado Street", "Mango Avenue", "Bayfront Road", "Palmetto Drive"],
 };
 
-// P1-3: one coast definition shared by rendering, the minimap and collision.
+// One coast definition shared by rendering, the minimap and collision.
 // WORLD.oceanStart is the hard land edge in city.resolveCircle, so water must
 // begin exactly there. Sand begins at the existing beachStart constant.
 export const COAST = {
@@ -43,7 +70,7 @@ export const COAST = {
   deepWaterStart: WORLD.oceanStart + 90,
 };
 
-// P1-5: story landmarks and characters, placed just outside the asphalt.
+// Story landmarks and characters, placed just outside the asphalt.
 export const LANDMARKS = [
   { id: "radio-tower", label: "RADIO TOWER", x: 790, y: 750, kind: "tower" },
   { id: "lockup", label: "LOCKUP", x: 780, y: 1950, kind: "lockup" },
@@ -53,27 +80,33 @@ export const LANDMARKS = [
   { id: "curator", label: "CURATOR", x: 1180, y: 1940, kind: "npc", color: "#a98cd6" },
 ];
 
-// P1-8: permanent city pickups. Respawned as active after each mission.
+// Permanent city pickups. Respawned as active after each mission.
 export const PICKUPS = [
   { id: "ammo-1", kind: "ammo", label: "AMMO", x: 1180, y: 1140, amount: 24 },
   { id: "health-1", kind: "health", label: "HEALTH", x: 2080, y: 540, amount: 35 },
 ];
 
-function nearestRoadIndex(values, value) {
+function nearestIndex(values, value) {
   let best = 0;
+  let bestGap = Math.abs(values[0] - value);
   for (let i = 1; i < values.length; i += 1) {
-    if (Math.abs(values[i] - value) < Math.abs(values[best] - value)) best = i;
+    const gap = Math.abs(values[i] - value);
+    if (gap < bestGap) {
+      best = i;
+      bestGap = gap;
+    }
   }
   return best;
 }
 
-// P1-4: street names derived from coordinates, never hard-coded by hand.
+// Street names derived from coordinates, never hard-coded by hand.
 export function streetNameAt(x, y, axis = "both") {
-  const vertical = STREET_NAMES.vertical[nearestRoadIndex(ROAD_X, x)];
-  const horizontal = STREET_NAMES.horizontal[nearestRoadIndex(ROAD_Y, y)];
-  if (axis === "vertical") return vertical;
-  if (axis === "horizontal") return horizontal;
-  return `${vertical} / ${horizontal}`;
+  const byAxis = {
+    vertical: STREET_NAMES.vertical[nearestIndex(ROAD_X, x)],
+    horizontal: STREET_NAMES.horizontal[nearestIndex(ROAD_Y, y)],
+  };
+  if (axis === "vertical" || axis === "horizontal") return byAxis[axis];
+  return `${byAxis.vertical} / ${byAxis.horizontal}`;
 }
 
 export const VEHICLE_COLORS = ["#d34f45", "#e4a73d", "#3f8ea3", "#e8e1cf", "#6f7f92", "#7b9560", "#9c5f83", "#d9d4c8"];
@@ -93,30 +126,6 @@ export const KEYS = {
   mute: ["KeyM"],
   confirm: ["Enter"],
 };
-
-// ---- shared math (unchanged) ----
-export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-export const lerp = (from, to, amount) => from + (to - from) * amount;
-export const distance = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
-export const angleTo = (ax, ay, bx, by) => Math.atan2(by - ay, bx - ax);
-export const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
-export const turnToward = (from, to, amount) => from + clamp(angleDelta(from, to), -amount, amount);
-export const pointInRect = (x, y, rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
-
-export function makeRng(seed = 1) {
-  let value = seed >>> 0;
-  return () => {
-    value += 0x6d2b79f5;
-    let mixed = value;
-    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
-    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function pick(rng, values) {
-  return values[Math.floor(rng() * values.length)];
-}
 
 // ---- wiring tuning ----
 export const STEP = 1 / 60;          // fixed simulation step

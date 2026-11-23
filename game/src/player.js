@@ -1,5 +1,15 @@
 import { WORLD, clamp, turnToward } from "./config.js";
 
+const WALK_SPEED = 155;
+const SPRINT_SPEED = 225;
+const ACCEL_RATE = 12;
+const DECEL_RATE = 10;
+const STAMINA_DRAIN = 28;
+const STAMINA_REGEN = 17;
+const HEALTH_REGEN = 28;
+const HURT_TIME = 0.28;
+const INVULN_TIME = 0.55;
+
 export function createPlayer(x = 1080, y = 780) {
   return {
     x,
@@ -18,35 +28,41 @@ export function createPlayer(x = 1080, y = 780) {
   };
 }
 
+function readMoveInput(input) {
+  let x = 0;
+  let y = 0;
+  if (input.isDown("forward")) y -= 1;
+  if (input.isDown("back")) y += 1;
+  if (input.isDown("left")) x -= 1;
+  if (input.isDown("right")) x += 1;
+  const magnitude = Math.hypot(x, y);
+  if (magnitude > 0) {
+    x /= magnitude;
+    y /= magnitude;
+  }
+  return { x, y, magnitude };
+}
+
 export function updatePlayer(player, input, city, delta, now) {
   if (player.vehicle) return;
 
-  let moveX = 0;
-  let moveY = 0;
-  if (input.isDown("forward")) moveY -= 1;
-  if (input.isDown("back")) moveY += 1;
-  if (input.isDown("left")) moveX -= 1;
-  if (input.isDown("right")) moveX += 1;
-  const length = Math.hypot(moveX, moveY);
-  const sprinting = input.isDown("sprint") && player.stamina > 1 && length > 0;
-  const speed = sprinting ? 225 : 155;
+  const move = readMoveInput(input);
+  const wantsSprint = input.isDown("sprint") && player.stamina > 1 && move.magnitude > 0;
+  const topSpeed = wantsSprint ? SPRINT_SPEED : WALK_SPEED;
 
-  if (length > 0) {
-    moveX /= length;
-    moveY /= length;
-    const targetX = moveX * speed;
-    const targetY = moveY * speed;
-    const response = 1 - Math.exp(-delta * 12);
-    player.vx += (targetX - player.vx) * response;
-    player.vy += (targetY - player.vy) * response;
-    player.angle = turnToward(player.angle, Math.atan2(moveY, moveX), delta * 12);
+  if (move.magnitude > 0) {
+    const blend = 1 - Math.exp(-delta * ACCEL_RATE);
+    player.vx += (move.x * topSpeed - player.vx) * blend;
+    player.vy += (move.y * topSpeed - player.vy) * blend;
+    player.angle = turnToward(player.angle, Math.atan2(move.y, move.x), delta * ACCEL_RATE);
   } else {
-    const response = 1 - Math.exp(-delta * 10);
-    player.vx *= 1 - response;
-    player.vy *= 1 - response;
+    const blend = 1 - Math.exp(-delta * DECEL_RATE);
+    player.vx *= 1 - blend;
+    player.vy *= 1 - blend;
   }
 
-  player.stamina = clamp(player.stamina + (sprinting ? -28 : 17) * delta, 0, 100);
+  const staminaDelta = (wantsSprint ? -STAMINA_DRAIN : STAMINA_REGEN) * delta;
+  player.stamina = clamp(player.stamina + staminaDelta, 0, 100);
   player.x += player.vx * delta;
   player.y += player.vy * delta;
   city.resolveCircle(player, player.radius);
@@ -54,14 +70,17 @@ export function updatePlayer(player, input, city, delta, now) {
   player.y = clamp(player.y, player.radius, WORLD.height - player.radius);
   player.hurtFlash = Math.max(0, player.hurtFlash - delta);
 
-  if (now < player.invulnerableUntil) player.health = Math.min(player.maxHealth, player.health + 28 * delta);
+  const recovering = now < player.invulnerableUntil;
+  if (recovering) {
+    player.health = Math.min(player.maxHealth, player.health + HEALTH_REGEN * delta);
+  }
 }
 
 export function damagePlayer(player, amount, now, direction = 0) {
   if (now < player.invulnerableUntil) return false;
   player.health = clamp(player.health - amount, 0, player.maxHealth);
-  player.invulnerableUntil = now + 0.55;
-  player.hurtFlash = 0.28;
+  player.invulnerableUntil = now + INVULN_TIME;
+  player.hurtFlash = HURT_TIME;
   if (direction) player.angle += (Math.random() - 0.5) * 0.25;
   return true;
 }

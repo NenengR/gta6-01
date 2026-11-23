@@ -5,9 +5,8 @@
 import { KEYS } from "./config.js";
 
 export function createInput(canvas, onGesture) {
-  const held = new Set();
-  const pressed = new Set();
-  let mouseBlocked = false;
+  const heldActions = new Set();
+  const freshPresses = new Set();
   const pointer = {
     screenX: 0,
     screenY: 0,
@@ -17,107 +16,121 @@ export function createInput(canvas, onGesture) {
     mouseDown: false,
     clicked: false,
   };
+  let clickSwallowed = false;
 
-  // Build a lookup once: event.code -> action name.
-  const actionByCode = new Map();
-  for (const [action, codes] of Object.entries(KEYS)) {
-    for (const code of codes) actionByCode.set(code, action);
-  }
+  // One lookup, built up front: event.code -> action name.
+  const codeToAction = new Map();
+  Object.entries(KEYS).forEach(([action, codes]) => {
+    codes.forEach((code) => codeToAction.set(code, action));
+  });
 
-  const PREVENT = new Set([
+  // These keys scroll or otherwise fight the page, so swallow them.
+  const SWALLOW = new Set([
     "forward", "back", "left", "right", "punch", "interact", "reload", "pause", "confirm",
   ]);
 
-  function onKeyDown(event) {
-    if (onGesture) onGesture("key");
-    const action = actionByCode.get(event.code);
-    if (!action) return;
-    if (PREVENT.has(action)) event.preventDefault();
-    if (!held.has(action)) pressed.add(action);
-    held.add(action);
+  function noteGesture(kind) {
+    if (onGesture) onGesture(kind);
   }
 
-  function onKeyUp(event) {
-    const action = actionByCode.get(event.code);
-    if (action) held.delete(action);
+  function keyDown(event) {
+    noteGesture("key");
+    const action = codeToAction.get(event.code);
+    if (action === undefined) return;
+    if (SWALLOW.has(action)) event.preventDefault();
+    if (!heldActions.has(action)) freshPresses.add(action);
+    heldActions.add(action);
   }
 
-  function updatePointer(event) {
+  function keyUp(event) {
+    const action = codeToAction.get(event.code);
+    if (action !== undefined) heldActions.delete(action);
+  }
+
+  function trackPointer(event) {
     const bounds = canvas.getBoundingClientRect();
     pointer.screenX = event.clientX - bounds.left;
     pointer.screenY = event.clientY - bounds.top;
     pointer.active = true;
   }
 
-  function onMouseDown(event) {
+  function mouseDown(event) {
     if (event.button !== 0) return;
-    if (onGesture) onGesture("mouse");
-    updatePointer(event);
+    noteGesture("mouse");
+    trackPointer(event);
     pointer.mouseDown = true;
     pointer.clicked = true;
   }
 
-  function onMouseUp(event) {
-    if (event.button === 0) {
-      pointer.mouseDown = false;
-      mouseBlocked = false;
-    }
+  function mouseUp(event) {
+    if (event.button !== 0) return;
+    pointer.mouseDown = false;
+    clickSwallowed = false;
   }
 
-  function onMouseMove(event) {
-    updatePointer(event);
+  function mouseMove(event) {
+    trackPointer(event);
   }
 
-  function clearHeld() {
-    held.clear();
-    pressed.clear();
-    mouseBlocked = false;
+  function resetAll() {
+    heldActions.clear();
+    freshPresses.clear();
+    clickSwallowed = false;
     pointer.mouseDown = false;
     pointer.clicked = false;
   }
 
-  window.addEventListener("keydown", onKeyDown);
-  window.addEventListener("keyup", onKeyUp);
-  window.addEventListener("blur", clearHeld);
-  canvas.addEventListener("mousedown", onMouseDown);
-  window.addEventListener("mouseup", onMouseUp);
-  canvas.addEventListener("mousemove", onMouseMove);
-  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  function blockContextMenu(event) {
+    event.preventDefault();
+  }
+
+  window.addEventListener("keydown", keyDown);
+  window.addEventListener("keyup", keyUp);
+  window.addEventListener("blur", resetAll);
+  canvas.addEventListener("mousedown", mouseDown);
+  window.addEventListener("mouseup", mouseUp);
+  canvas.addEventListener("mousemove", mouseMove);
+  canvas.addEventListener("contextmenu", blockContextMenu);
+
+  function mouseHeld() {
+    return !clickSwallowed && pointer.mouseDown;
+  }
 
   return {
     pointer,
     // combat.js reads `input.mouseDown`: true for the mouse button OR the F key.
     get mouseDown() {
-      return (!mouseBlocked && pointer.mouseDown) || held.has("shoot");
+      return mouseHeld() || heldActions.has("shoot");
     },
     isDown(action) {
-      return held.has(action);
+      return heldActions.has(action);
     },
     wasPressed(action) {
-      return pressed.has(action);
+      return freshPresses.has(action);
     },
     wasClicked() {
       return pointer.clicked;
     },
     consumePressed(action) {
-      return pressed.delete(action);
+      return freshPresses.delete(action);
     },
     consumeUiInput() {
-      pressed.clear();
+      freshPresses.clear();
       pointer.clicked = false;
-      mouseBlocked = pointer.mouseDown;
+      clickSwallowed = pointer.mouseDown;
     },
     endFrame() {
-      pressed.clear();
+      freshPresses.clear();
       pointer.clicked = false;
     },
     destroy() {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", clearHeld);
-      canvas.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("mouseup", onMouseUp);
-      canvas.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", resetAll);
+      canvas.removeEventListener("mousedown", mouseDown);
+      window.removeEventListener("mouseup", mouseUp);
+      canvas.removeEventListener("mousemove", mouseMove);
+      canvas.removeEventListener("contextmenu", blockContextMenu);
     },
   };
 }

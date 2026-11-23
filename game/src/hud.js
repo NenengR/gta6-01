@@ -6,7 +6,7 @@ import { activeMission, missionMarker, missionTimeRemaining } from "./missions.j
 import { getVehicleSpeed } from "./vehicles.js";
 import { SCREEN_PLAY, SCREEN_PAUSED } from "./render.js";
 
-const MISSION_TOTAL = 5;
+const TOTAL_JOBS = 5;
 const FONT = "'Trebuchet MS', 'Segoe UI', system-ui, sans-serif";
 
 export function createHud(canvas, gameCanvas) {
@@ -39,6 +39,27 @@ export function createHud(canvas, gameCanvas) {
     ctx.strokeStyle = "rgba(242,199,106,0.25)";
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  }
+
+  // A horizontal fill bar with a translucent track underneath.
+  function meter(x, y, w, h, ratio, fill) {
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = fill;
+    ctx.fillRect(x, y, w * clamp(ratio, 0, 1), h);
+  }
+
+  // A filled circle with a dark ring, used for minimap markers.
+  // ringR defaults to just outside the dot; pass it when the ring is wider.
+  function mapDot(x, y, r, fill, ring = "#14181f", ringR = r + 2.5) {
+    ctx.fillStyle = ring;
+    ctx.beginPath();
+    ctx.arc(x, y, ringR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function star(cx, cy, r, filled) {
@@ -90,40 +111,43 @@ export function createHud(canvas, gameCanvas) {
   }
 
   function drawSpeed(player, x, y) {
-    if (player.vehicle) {
-      const kmh = getVehicleSpeed(player.vehicle);
-      text(`${kmh}`, x, y, 34, "#ffe6a8", "right", "bold");
-      text("KM/H", x, y + 18, 12, "#d9c9a6", "right");
-      const ratio = clamp(kmh / 230, 0, 1);
-      const barW = 150;
-      ctx.fillStyle = "rgba(255,255,255,0.18)";
-      ctx.fillRect(x - barW, y + 27, barW, 6);
-      ctx.fillStyle = kmh > 170 ? "#e06052" : "#e0a94a";
-      ctx.fillRect(x - barW, y + 27, barW * ratio, 6);
-      const hp = clamp(player.vehicle.health / 100, 0, 1);
-      text("CAR", x, y - 24, 11, "#c9d0d6", "right", "bold");
-      ctx.fillStyle = "rgba(255,255,255,0.18)";
-      ctx.fillRect(x - barW, y - 18, barW, 5);
-      ctx.fillStyle = hp > 0.4 ? "#7bbf86" : "#e06052";
-      ctx.fillRect(x - barW, y - 18, barW * hp, 5);
-    } else {
+    if (!player.vehicle) {
       text("ON FOOT", x, y, 18, "#d9c9a6", "right", "bold");
+      return;
     }
+    const kmh = getVehicleSpeed(player.vehicle);
+    const barW = 150;
+    text(`${kmh}`, x, y, 34, "#ffe6a8", "right", "bold");
+    text("KM/H", x, y + 18, 12, "#d9c9a6", "right");
+    meter(x - barW, y + 27, barW, 6, kmh / 230, kmh > 170 ? "#e06052" : "#e0a94a");
+    const hp = clamp(player.vehicle.health / 100, 0, 1);
+    text("CAR", x, y - 24, 11, "#c9d0d6", "right", "bold");
+    meter(x - barW, y - 18, barW, 5, hp, hp > 0.4 ? "#7bbf86" : "#e06052");
   }
 
   function drawObjective(state, x, y, w) {
     const missions = state.missions;
     const active = activeMission(missions);
-    const finished = missions && missions.completed.length >= MISSION_TOTAL;
+    const finished = missions && missions.completed.length >= TOTAL_JOBS;
     const wanted = state.police ? state.police.wanted : 0;
-    const objective = wanted > 0
-      ? `LOSE THE POLICE  (${wanted} star${wanted === 1 ? "" : "s"})`
-      : active ? active.step.label
-        : finished ? "All jobs done. The coastline is yours."
-          : missions ? "Press E at Nia's radio for the next job"
-            : "Explore the city";
-    const title = wanted > 0 ? "PURSUIT IN PROGRESS"
-      : active ? `${active.title}  ·  ${active.subtitle}` : "SUNBREAK: COASTLINE";
+    let title;
+    let objective;
+    if (wanted > 0) {
+      title = "PURSUIT IN PROGRESS";
+      objective = `LOSE THE POLICE  (${wanted} star${wanted === 1 ? "" : "s"})`;
+    } else if (active) {
+      title = `${active.title}  ·  ${active.subtitle}`;
+      objective = active.step.label;
+    } else if (finished) {
+      title = "SUNBREAK: COASTLINE";
+      objective = "All jobs done. The coastline is yours.";
+    } else if (missions) {
+      title = "SUNBREAK: COASTLINE";
+      objective = "Press E at Nia's radio for the next job";
+    } else {
+      title = "SUNBREAK: COASTLINE";
+      objective = "Explore the city";
+    }
     const remaining = missionTimeRemaining(missions);
     const lines = remaining !== null ? 2 : 1;
     const h = 52 + lines * 22;
@@ -181,26 +205,10 @@ export function createHud(canvas, gameCanvas) {
     ctx.stroke();
 
     const marker = missionMarker(state.missions);
-    if (marker) {
-      ctx.fillStyle = "#14181f";
-      ctx.beginPath();
-      ctx.arc(mx(marker.x), my(marker.y), 7.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ffd45e";
-      ctx.beginPath();
-      ctx.arc(mx(marker.x), my(marker.y), 5, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    if (marker) mapDot(mx(marker.x), my(marker.y), 5, "#ffd45e");
     const active = activeMission(state.missions);
     if (active && active.step && Number.isFinite(active.step.x)) {
-      ctx.fillStyle = "#14181f";
-      ctx.beginPath();
-      ctx.arc(mx(active.step.x), my(active.step.y), 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#7eecb2";
-      ctx.beginPath();
-      ctx.arc(mx(active.step.x), my(active.step.y), 5.5, 0, Math.PI * 2);
-      ctx.fill();
+      mapDot(mx(active.step.x), my(active.step.y), 5.5, "#7eecb2");
     }
     if (state.police) {
       for (const unit of state.police.units) {
@@ -216,26 +224,21 @@ export function createHud(canvas, gameCanvas) {
     if (p) {
       const px = mx(p.x);
       const py = my(p.y);
+      const tipX = px + Math.cos(p.angle) * 16;
+      const tipY = py + Math.sin(p.angle) * 16;
       ctx.strokeStyle = "#14181f";
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.lineTo(px + Math.cos(p.angle) * 16, py + Math.sin(p.angle) * 16);
+      ctx.lineTo(tipX, tipY);
       ctx.stroke();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.lineTo(px + Math.cos(p.angle) * 16, py + Math.sin(p.angle) * 16);
+      ctx.lineTo(tipX, tipY);
       ctx.stroke();
-      ctx.fillStyle = "#14181f";
-      ctx.beginPath();
-      ctx.arc(px, py, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ffd45e";
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, Math.PI * 2);
-      ctx.fill();
+      mapDot(px, py, 5, "#ffd45e", "#14181f", 7);
     }
     ctx.restore();
     text("COASTLINE", x + 8, y + 14, 10, "rgba(255,255,255,0.85)", "left", "bold");
