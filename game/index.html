@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunbreak Coastline</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #0d1117;
+    color: #e8e8e8;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #game {
+    display: block;
+    width: 1280px;
+    height: 800px;
+    max-width: 100%;
+    background: #22331f;
+    border: 2px solid #2a2f3a;
+    border-radius: 6px;
+  }
+  #status {
+    margin-top: 10px;
+    font-size: 15px;
+    color: #ffd76a;
+    min-height: 1.2em;
+    text-align: center;
+  }
+  #new-game {
+    margin-top: 8px;
+    font-size: 16px;
+    padding: 8px 22px;
+    border-radius: 6px;
+    border: 1px solid #4a5568;
+    background: #1f6feb;
+    color: #fff;
+    cursor: pointer;
+  }
+  #new-game:hover { background: #2b7fff; }
+  #help {
+    margin-top: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #9aa4b2;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="800" aria-label="Sunbreak Coastline game"></canvas>
+<noscript><p style="color:#ffd76a">Sunbreak Coastline needs JavaScript to run.</p></noscript>
+<div id="status">Sunbreak: Coastline. Press Enter or click New Game to begin.</div>
+<button id="new-game" type="button">New Game</button>
+<div id="help">Move: WASD or arrow keys. Interact: E. Pause: P. Mute: M. Walk up to a parked car and press E to steal it.</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
